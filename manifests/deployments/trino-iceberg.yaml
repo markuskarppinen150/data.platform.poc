@@ -1,0 +1,213 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-catalog-iceberg
+  namespace: default
+data:
+  iceberg.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=hive_metastore
+    hive.metastore.uri=thrift://hive-metastore.default.svc.cluster.local:9083
+    # MinIO S3 configuration
+    fs.native-s3.enabled=true
+    s3.endpoint=http://minio.default.svc.cluster.local:9000
+    s3.path-style-access=true
+    s3.aws-access-key=admin
+    s3.aws-secret-key=minio_password
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-config
+  namespace: default
+data:
+  config.properties: |
+    coordinator=true
+    node-scheduler.include-coordinator=true
+    http-server.http.port=8080
+    discovery.uri=http://localhost:8080
+    query.max-memory=2GB
+    query.max-memory-per-node=1GB
+  jvm.config: |
+    -server
+    -Xmx2G
+    -XX:+UseG1GC
+    -XX:G1HeapRegionSize=32M
+    -XX:+ExplicitGCInvokesConcurrent
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:+ExitOnOutOfMemoryError
+    -Djdk.attach.allowAttachSelf=true
+  node.properties: |
+    node.environment=production
+    node.data-dir=/data/trino
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino
+  namespace: default
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app: trino
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino
+  namespace: default
+  labels:
+    app: trino
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino
+  template:
+    metadata:
+      labels:
+        app: trino
+    spec:
+      containers:
+      - name: trino
+        image: trinodb/trino:438
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/trino
+        - name: catalog
+          mountPath: /etc/trino/catalog
+        - name: data
+          mountPath: /data/trino
+        env:
+        - name: AWS_ACCESS_KEY_ID
+          value: "admin"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "minio_password"
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        livenessProbe:
+          httpGet:
+            path: /v1/info
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /v1/info
+            port: 8080
+          initialDelaySeconds: 20
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: trino-config
+      - name: catalog
+        configMap:
+          name: trino-catalog-iceberg
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hive-metastore
+  namespace: default
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9083
+      targetPort: 9083
+      name: thrift
+  selector:
+    app: hive-metastore
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hive-metastore
+  namespace: default
+  labels:
+    app: hive-metastore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hive-metastore
+  template:
+    metadata:
+      labels:
+        app: hive-metastore
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:16
+        command: ['sh', '-c', 'until pg_isready -h postgres-postgresql -U postgres; do echo waiting for postgres; sleep 2; done']
+      - name: download-jdbc-driver
+        image: busybox
+        command: ['sh', '-c', 'wget -O /drivers/postgresql-jdbc.jar https://jdbc.postgresql.org/download/postgresql-42.7.1.jar && ls -lh /drivers/']
+        volumeMounts:
+        - name: jdbc-driver
+          mountPath: /drivers
+      containers:
+      - name: metastore
+        image: apache/hive:4.0.0
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            # Set CLASSPATH to include JDBC driver
+            echo "Setting up PostgreSQL JDBC driver..."
+            export CLASSPATH=/drivers/postgresql-jdbc.jar:$CLASSPATH
+            export HADOOP_CLASSPATH=/drivers/postgresql-jdbc.jar:$HADOOP_CLASSPATH
+            ls -lh /drivers/postgresql-jdbc.jar
+            
+            echo "Starting Hive Metastore..."
+            # Start metastore with schema verification disabled
+            export METASTORE_DB_HOSTNAME=postgres-postgresql.default.svc.cluster.local
+            /opt/hive/bin/hive --service metastore --hiveconf hive.metastore.schema.verification=false
+        ports:
+        - containerPort: 9083
+          name: thrift
+        volumeMounts:
+        - name: jdbc-driver
+          mountPath: /drivers
+        env:
+        - name: SERVICE_NAME
+          value: "metastore"
+        - name: DB_DRIVER
+          value: "postgres"
+        - name: SERVICE_OPTS
+          value: "-Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres-postgresql.default.svc.cluster.local:5432/metastore -Djavax.jdo.option.ConnectionUserName=postgres -Djavax.jdo.option.ConnectionPassword=$(POSTGRES_PASSWORD) -Daws.accessKeyId=admin -Daws.secretKey=minio_password -Ds3.endpoint=http://minio.default.svc.cluster.local:9000"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-postgresql
+              key: postgres-password
+        - name: AWS_ACCESS_KEY_ID
+          value: "admin"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "minio_password"
+        - name: S3_ENDPOINT
+          value: "http://minio.default.svc.cluster.local:9000"
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+      volumes:
+      - name: jdbc-driver
+        emptyDir: {}

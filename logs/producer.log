@@ -1,0 +1,20 @@
+2026-02-11 13:45:40,093 - __main__ - INFO - Starting Image Producer
+2026-02-11 13:45:40,093 - __main__ - INFO - Kafka Servers: localhost:9092
+2026-02-11 13:45:40,093 - __main__ - INFO - Kafka Topic: image-uploads
+2026-02-11 13:45:40,093 - __main__ - INFO - Watch Path: /home/markus/Documents/data-platform/images/incoming
+2026-02-11 13:45:40,094 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv4 ('127.0.0.1', 9092)]>: connecting to localhost:9092 [('127.0.0.1', 9092) IPv4]
+2026-02-11 13:45:40,094 - kafka.conn - INFO - Probing node bootstrap-0 broker version
+2026-02-11 13:45:40,094 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connecting> [IPv4 ('127.0.0.1', 9092)]>: Connection complete.
+2026-02-11 13:45:40,197 - kafka.conn - INFO - Broker version identified as 2.6.0
+2026-02-11 13:45:40,197 - kafka.conn - INFO - Set configuration api_version=(2, 6, 0) to skip auto check_version requests on startup
+2026-02-11 13:45:40,199 - __main__ - INFO - 👁️  Watching images/incoming for new images...
+2026-02-11 13:45:40,199 - __main__ - INFO - Press Ctrl+C to stop
+2026-02-11 13:45:56,634 - __main__ - INFO - Processing new image: regions.png
+2026-02-11 13:45:56,642 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv4 ('127.0.0.1', 9092)]>: connecting to localhost:9092 [('127.0.0.1', 9092) IPv4]
+2026-02-11 13:45:56,642 - kafka.conn - INFO - <BrokerConnection node_id=1 host=localhost:9092 <connecting> [IPv4 ('127.0.0.1', 9092)]>: Connection complete.
+2026-02-11 13:45:56,642 - kafka.conn - INFO - <BrokerConnection node_id=bootstrap-0 host=localhost:9092 <connected> [IPv4 ('127.0.0.1', 9092)]>: Closing connection. 
+2026-02-11 13:45:56,764 - kafka.producer.record_accumulator - WARNING - Produced messages to topic-partition TopicPartition(topic='image-uploads', partition=0) with base offset -1 log start offset -1 and error None.
+2026-02-11 13:45:56,765 - __main__ - ERROR - Failed to send regions.png to Kafka: [Error 10] MessageSizeTooLargeError
+2026-02-11 13:45:56,765 - __main__ - ERROR - Error processing images/incoming/regions.png: [Error 10] MessageSizeTooLargeError
+2026-02-11 13:47:01,721 - __main__ - INFO - Processing new image: Screenshot from 2026-01-21 14-24-21.png
+2026-02-11 13:47:01,729 - __main__ - INFO - ✓ Sent Screenshot from 2026-01-21 14-24-21.png to Kafka (topic: image-uploads, partition: 1, offset: 0)

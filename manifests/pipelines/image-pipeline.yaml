@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: image-pipeline-config
+  namespace: default
+data:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.default.svc.cluster.local:9092"
+  KAFKA_TOPIC: "image-uploads"
+  KAFKA_GROUP_ID: "image-consumer-group"
+  MINIO_ENDPOINT: "minio.default.svc.cluster.local:9000"
+  MINIO_ACCESS_KEY: "admin"
+  MINIO_BUCKET: "images"
+  POSTGRES_HOST: "postgres-postgresql.default.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "postgres"
+  POSTGRES_USER: "postgres"
+  WATCH_PATH: "/data/incoming"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: image-incoming-pvc
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-producer
+  namespace: default
+  labels:
+    app: image-producer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: image-producer
+  template:
+    metadata:
+      labels:
+        app: image-producer
+    spec:
+      containers:
+      - name: producer
+        image: python:3.12-slim
+        command: ["/bin/bash"]
+        args:
+          - -c
+          - |
+            pip install --no-cache-dir kafka-python-ng==2.2.2 watchdog==4.0.2
+            python /app/image_producer.py
+        envFrom:
+        - configMapRef:
+            name: image-pipeline-config
+        volumeMounts:
+        - name: scripts
+          mountPath: /app
+        - name: incoming-images
+          mountPath: /data/incoming
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: scripts
+        configMap:
+          name: image-pipeline-scripts
+      - name: incoming-images
+        persistentVolumeClaim:
+          claimName: image-incoming-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-consumer
+  namespace: default
+  labels:
+    app: image-consumer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: image-consumer
+  template:
+    metadata:
+      labels:
+        app: image-consumer
+    spec:
+      containers:
+      - name: consumer
+        image: python:3.12-slim
+        command: ["/bin/bash"]
+        args:
+          - -c
+          - |
+            pip install --no-cache-dir kafka-python-ng==2.2.2 minio==7.2.9 psycopg2-binary==2.9.9
+            python /app/image_consumer.py
+        envFrom:
+        - configMapRef:
+            name: image-pipeline-config
+        env:
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio
+              key: root-password
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-postgresql
+              key: postgres-password
+        volumeMounts:
+        - name: scripts
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+      volumes:
+      - name: scripts
+        configMap:
+          name: image-pipeline-scripts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: image-producer
+  namespace: default
+spec:
+  selector:
+    app: image-producer
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: image-consumer
+  namespace: default
+spec:
+  selector:
+    app: image-consumer
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
