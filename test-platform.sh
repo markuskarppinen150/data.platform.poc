@@ -47,9 +47,8 @@ check_pods "default" "app=kafka" "Kafka"
 check_pods "airflow" "component=scheduler" "Airflow Scheduler"
 check_pods "airflow" "tier=airflow" "Airflow API Server"
 check_pods "spark-operator" "app.kubernetes.io/name=spark-operator" "Spark Operator"
-check_pods "default" "app=lakekeeper" "Lakekeeper (Iceberg REST)"
+check_pods "default" "app=iceberg-rest" "Apache Polaris (Iceberg REST)"
 check_pods "default" "app=trino" "Trino Query Engine"
-check_pods "default" "app=hive-metastore" "Hive Metastore"
 
 # 3. Test PostgreSQL
 echo ""
@@ -150,25 +149,26 @@ else
     echo -e "${RED}✗ Spark Operator CRDs not found${NC}"
 fi
 
-# 8. Test Lakekeeper
+# 8. Test Apache Polaris
 echo ""
-echo "9️⃣  Lakekeeper REST Catalog Test"
-echo "-------------------------------"
-LAKEKEEPER_POD=$(kubectl get pod -l app=lakekeeper -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
-if [ ! -z "$LAKEKEEPER_POD" ]; then
-    if kubectl exec $LAKEKEEPER_POD -- curl -s http://localhost:8181/health > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ Lakekeeper is operational${NC}"
-        echo "  REST Catalog endpoint: http://lakekeeper.default.svc.cluster.local:8181"
+echo "8️⃣  Apache Polaris REST Catalog Test"
+echo "-----------------------------------"
+POLARIS_POD=$(kubectl get pod -l app=iceberg-rest -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
+if [ ! -z "$POLARIS_POD" ]; then
+    if kubectl exec $POLARIS_POD -- curl -s http://localhost:8181/api/catalog/v1/config > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ Apache Polaris is operational${NC}"
+        echo "  REST Catalog endpoint: http://iceberg-rest.default.svc.cluster.local:8181/api/catalog"
+        echo "  Admin endpoint: http://iceberg-rest.default.svc.cluster.local:8182"
     else
-        echo -e "${RED}✗ Lakekeeper health check failed${NC}"
+        echo -e "${RED}✗ Apache Polaris health check failed${NC}"
     fi
 else
-    echo -e "${RED}✗ Lakekeeper pod not found${NC}"
+    echo -e "${RED}✗ Apache Polaris pod not found${NC}"
 fi
 
 # 9. Test Trino
 echo ""
-echo "8️⃣  Trino Query Engine Test"
+echo "9️⃣  Trino Query Engine Test"
 echo "--------------------------"
 TRINO_POD=$(kubectl get pod -l app=trino -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
 if [ ! -z "$TRINO_POD" ]; then
@@ -184,20 +184,12 @@ if [ ! -z "$TRINO_POD" ]; then
         echo -e "${RED}✗ Trino connection failed${NC}"
     fi
 else
-echo -e "${YELLOW}Trino:${NC}"
-echo "  kubectl port-forward svc/trino 8080:8080"
-echo "  → http://localhost:8080"
-echo ""
-echo -e "${YELLOW}Lakekeeper (Iceberg REST):${NC}"
-echo "  kubectl port-forward svc/lakekeeper 8181:8181"
-echo "  → http://localhost:8181"
-echo ""
     echo -e "${RED}✗ Trino pod not found${NC}"
 fi
 
 # 10. Service URLs
 echo ""
-echo "8️⃣  Access Information"
+echo "🔗 Access Information"
 echo "--------------------"
 echo "To access services, run these port-forward commands:"
 echo ""
@@ -212,6 +204,14 @@ echo ""
 echo -e "${YELLOW}PostgreSQL:${NC}"
 echo "  kubectl port-forward svc/postgres-postgresql 5432:5432"
 echo "  → localhost:5432 (postgres/<get-secret>)"
+echo ""
+echo -e "${YELLOW}Trino:${NC}"
+echo "  kubectl port-forward svc/trino 8080:8080"
+echo "  → http://localhost:8080"
+echo ""
+echo -e "${YELLOW}Apache Polaris (Iceberg REST):${NC}"
+echo "  kubectl port-forward svc/iceberg-rest 8181:8181"
+echo "  → http://localhost:8181/api/catalog"
 echo ""
 
 # 9. Summary

@@ -23,7 +23,7 @@ metadata:
   namespace: default
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 5Gi
@@ -52,7 +52,7 @@ spec:
         args:
           - -c
           - |
-            pip install --no-cache-dir kafka-python-ng==2.2.2 watchdog==4.0.2
+            pip install --no-cache-dir kafka-python-ng==2.2.2
             python /app/image_producer.py
         envFrom:
         - configMapRef:

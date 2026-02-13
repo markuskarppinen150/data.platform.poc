@@ -10,7 +10,7 @@ Actually processes images through the pipeline:
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 import os
 import hashlib
@@ -29,7 +29,8 @@ dag = DAG(
     'image_processing_etl',
     default_args=default_args,
     description='ETL pipeline for image processing with Spark',
-    schedule_interval='*/10 * * * *',  # Every 10 minutes
+    schedule='@continuous',  # Run continuously
+    max_active_runs=1,  # Required for continuous schedule
     catchup=False,
     tags=['etl', 'image-processing', 'spark'],
 )
@@ -239,9 +240,9 @@ consume_task = PythonOperator(
     dag=dag,
 )
 
-cleanup_task = PostgresOperator(
+cleanup_task = SQLExecuteQueryOperator(
     task_id='cleanup_old_data',
-    postgres_conn_id='postgres_default',
+    conn_id='postgres_default',
     sql="""
         -- Delete metadata for images older than 30 days
         DELETE FROM image_metadata 
@@ -251,4 +252,4 @@ cleanup_task = PostgresOperator(
 )
 
 # Pipeline flow
-scan_task >> check_spark_task >> [spark_processing, skip_spark] >> consume_task >> cleanup_taskprocessing_task >> [consume_task, skip_processing]
+scan_task >> check_processing_task >> [consume_task, skip_processing] >> cleanup_task

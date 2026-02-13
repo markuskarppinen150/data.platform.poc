@@ -1,4 +1,4 @@
--- Example Iceberg queries for Trino with Lakekeeper REST Catalog
+-- Example Iceberg queries for Trino with Apache Polaris REST Catalog
 
 -- 1. Show available catalogs
 SHOW CATALOGS;
