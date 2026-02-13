@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-catalog-iceberg-rest
+  namespace: default
+data:
+  iceberg.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://iceberg-rest.default.svc.cluster.local:8181/api/catalog
+    
+    # S3/MinIO Configuration
+    fs.native-s3.enabled=true
+    s3.endpoint=http://minio.default.svc.cluster.local:9000
+    s3.path-style-access=true
+    s3.aws-access-key=admin
+    s3.aws-secret-key=minio_password
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-config-rest
+  namespace: default
+data:
+  config.properties: |
+    coordinator=true
+    node-scheduler.include-coordinator=true
+    http-server.http.port=8080
+    discovery.uri=http://localhost:8080
+    query.max-memory=2GB
+    query.max-memory-per-node=1GB
+  jvm.config: |
+    -server
+    -Xmx2G
+    -XX:+UseG1GC
+    -XX:G1HeapRegionSize=32M
+    -XX:+ExplicitGCInvokesConcurrent
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:+ExitOnOutOfMemoryError
+    -XX:+UnlockDiagnosticVMOptions
+    -XX:G1NumCollectionsKeepPinned=10000000
+    -Djdk.attach.allowAttachSelf=true
+  node.properties: |
+    node.environment=production
+    node.data-dir=/data/trino
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino
+  namespace: default
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app: trino
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino
+  namespace: default
+  labels:
+    app: trino
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino
+  template:
+    metadata:
+      labels:
+        app: trino
+    spec:
+      initContainers:
+      - name: wait-for-iceberg-rest
+        image: alpine:3.19
+        command:
+          - sh
+          - -c
+          - |
+            apk add --no-cache curl
+            echo "Waiting for Iceberg REST catalog to be ready..."
+            until curl -s --max-time 5 http://iceberg-rest.default.svc.cluster.local:8181/ 2>&1 | grep -q 'error\|html\|{'; do
+              echo "Iceberg REST not ready, waiting..."
+              sleep 5
+            done
+            echo "Iceberg REST catalog is ready!"
+            sleep 10
+      containers:
+      - name: trino
+        image: trinodb/trino:450
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/trino
+        - name: catalog
+          mountPath: /etc/trino/catalog
+        - name: data
+          mountPath: /data/trino
+        env:
+        - name: AWS_ACCESS_KEY_ID
+          value: "admin"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "minio_password"
+        - name: AWS_REGION
+          value: "us-east-1"
+        resources:
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        livenessProbe:
+          httpGet:
+            path: /v1/info
+            port: 8080
+          initialDelaySeconds: 90
+          periodSeconds: 20
+          timeoutSeconds: 10
+          failureThreshold: 6
+        readinessProbe:
+          httpGet:
+            path: /v1/info
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 12
+      volumes:
+      - name: config
+        configMap:
+          name: trino-config-rest
+      - name: catalog
+        configMap:
+          name: trino-catalog-iceberg-rest
+      - name: data
+        emptyDir: {}

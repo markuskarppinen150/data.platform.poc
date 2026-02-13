@@ -9,8 +9,6 @@ import base64
 import hashlib
 from pathlib import Path
 from datetime import datetime
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 from kafka import KafkaProducer
 import logging
 
@@ -20,41 +18,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class ImageHandler(FileSystemEventHandler):
-    """Handles new image files in the watched directory"""
+class ImageHandler:
+    """Handles new image files in the watched directory using polling"""
     
     SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
     
     def __init__(self, kafka_producer, kafka_topic, watch_path):
         self.producer = kafka_producer
         self.topic = kafka_topic
-        self.watch_path = watch_path
+        self.watch_path = Path(watch_path)
         self.processed_files = set()
     
-    def on_created(self, event):
-        """Called when a file or directory is created"""
-        if event.is_directory:
-            return
-        
-        file_path = Path(event.src_path)
-        
-        # Check if it's an image file
-        if file_path.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
-            logger.debug(f"Ignoring non-image file: {file_path}")
-            return
-        
-        # Avoid processing the same file multiple times
-        if str(file_path) in self.processed_files:
-            return
-        
-        # Wait a bit to ensure file is fully written
-        time.sleep(0.5)
-        
+    def check_for_new_files(self):
+        """Poll directory for new image files"""
         try:
-            self.process_image(file_path)
-            self.processed_files.add(str(file_path))
+            # Get all files in the directory
+            for file_path in self.watch_path.iterdir():
+                # Skip directories
+                if file_path.is_dir():
+                    continue
+                
+                # Check if it's an image file
+                if file_path.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
+                    continue
+                
+                # Skip already processed files
+                file_key = str(file_path.absolute())
+                if file_key in self.processed_files:
+                    continue
+                
+                # Process the new file
+                try:
+                    self.process_image(file_path)
+                    self.processed_files.add(file_key)
+                except Exception as e:
+                    logger.error(f"Error processing {file_path}: {e}")
         except Exception as e:
-            logger.error(f"Error processing {file_path}: {e}")
+            logger.error(f"Error checking directory: {e}")
     
     def process_image(self, file_path: Path):
         """Process and send image to Kafka"""
@@ -123,6 +123,7 @@ def main():
     KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
     KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'image-uploads')
     WATCH_PATH = os.getenv('WATCH_PATH', './images/incoming')
+    POLL_INTERVAL = int(os.getenv('POLL_INTERVAL', '1'))  # seconds
     
     # Create watch directory if it doesn't exist
     watch_dir = Path(WATCH_PATH)
@@ -132,6 +133,7 @@ def main():
     logger.info(f"Kafka Servers: {KAFKA_BOOTSTRAP_SERVERS}")
     logger.info(f"Kafka Topic: {KAFKA_TOPIC}")
     logger.info(f"Watch Path: {watch_dir.absolute()}")
+    logger.info(f"Poll Interval: {POLL_INTERVAL}s")
     
     # Initialize Kafka producer
     producer = KafkaProducer(
@@ -142,24 +144,20 @@ def main():
         retries=3
     )
     
-    # Setup file system observer
-    event_handler = ImageHandler(producer, KAFKA_TOPIC, watch_dir)
-    observer = Observer()
-    observer.schedule(event_handler, str(watch_dir), recursive=False)
-    observer.start()
+    # Setup image handler with polling
+    handler = ImageHandler(producer, KAFKA_TOPIC, watch_dir)
     
-    logger.info(f"👁️  Watching {watch_dir} for new images...")
+    logger.info(f"👁️  Polling {watch_dir} for new images every {POLL_INTERVAL}s...")
     logger.info("Press Ctrl+C to stop")
     
     try:
         while True:
-            time.sleep(1)
+            handler.check_for_new_files()
+            time.sleep(POLL_INTERVAL)
     except KeyboardInterrupt:
-        logger.info("Stopping observer...")
-        observer.stop()
+        logger.info("Stopping producer...")
         producer.close()
     
-    observer.join()
     logger.info("Image Producer stopped")
 
 

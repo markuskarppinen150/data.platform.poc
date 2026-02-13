@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.operators.bash import BashOperator
-from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.trigger_rule import TriggerRule
 import json
@@ -30,7 +30,7 @@ dag = DAG(
     'image_processing_pipeline',
     default_args=default_args,
     description='Orchestrate image ingestion from folder → Kafka → MinIO → PostgreSQL',
-    schedule_interval='*/5 * * * *',  # Every 5 minutes
+    schedule='*/5 * * * *',  # Every 5 minutes
     catchup=False,
     tags=['image-processing', 'kafka', 'minio', 'etl'],
 )
@@ -303,9 +303,9 @@ get_latest_images_task = PythonOperator(
     dag=dag,
 )
 
-get_stats = PostgresOperator(
+get_stats = SQLExecuteQueryOperator(
     task_id='get_daily_stats',
-    postgres_conn_id='postgres_default',
+    conn_id='postgres_default',
     sql="""
         SELECT 
             COUNT(*) as total_today,

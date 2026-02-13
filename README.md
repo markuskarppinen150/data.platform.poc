@@ -9,7 +9,7 @@ This platform includes:
 - **MinIO** - S3-compatible object storage
 - **Kafka** - Message broker for streaming
 - **Apache Iceberg** - Table format for data lakes
-- **Lakekeeper** - REST catalog for Iceberg
+- **Apache Polaris** - REST catalog for Iceberg
 - **Trino** - Distributed SQL query engine
 - **Airflow** - Workflow orchestration
 - **Spark Operator** - Big data processing
@@ -88,7 +88,7 @@ cd ~/Documents/data-platform
 - Installs PostgreSQL with PostGIS (geospatial database)
 - Installs MinIO (object storage)
 - Installs Kafka (message broker)
-- Installs Lakekeeper (Iceberg REST catalog)
+- Installs Apache Polaris (Iceberg REST catalog)
 - Installs Trino (query engine)
 - Installs Airflow (orchestration)
 - Installs Spark Operator (data processing)
@@ -113,7 +113,7 @@ cd ~/Documents/data-platform
 - ✓ Cluster is running
 - ✓ All pods are healthy
 - ✓ PostgreSQL connection + PostGIS extension
-- ✓ Lakekeeper REST catalog
+- ✓ Apache Polaris REST catalog
 - ✓ Trino query engine
 - ✓ MinIO storage access
 - ✓ Kafka broker connectivity
@@ -239,9 +239,9 @@ trino --server http://localhost:8080
 trino --server http://localhost:8080 --catalog iceberg --schema data_lake
 ```
 
-#### Lakekeeper REST Catalog
+#### Apache Polaris REST Catalog
 ```bash
-kubectl port-forward svc/lakekeeper 8181:8181
+kubectl port-forward svc/iceberg-rest 8181:8181
 ```
 - Health check: http://localhost:8181/health
 - REST API endpoint for Iceberg clients
@@ -414,9 +414,6 @@ kubectl logs <spark-driver-pod>
 # Copy DAG to Airflow
 SCHEDULER_POD=$(kubectl get pod -n airflow -l component=scheduler -o jsonpath="{.items[0].metadata.name}")
 
-# Deploy Spark orchestrator DAG
-kubectl cp dags/spark_orchestrator_dag.py airflow/$SCHEDULER_POD:/opt/airflow/dags/
-
 # Deploy Image Pipeline DAG
 kubectl cp dags/image_processing_pipeline_dag.py airflow/$SCHEDULER_POD:/opt/airflow/dags/
 
@@ -469,15 +466,15 @@ This will:
 ```
 data-platform/
 ├── dags/                           # Airflow DAG definitions
-│   ├── spark_orchestrator_dag.py   # Spark job orchestration
 │   ├── image_processing_pipeline_dag.py  # Image pipeline monitoring
 │   └── image_processing_etl_dag.py # Image ETL processing
 ├── manifests/                      # Kubernetes manifests
 │   ├── deployments/                # Infrastructure deployments
 │   │   ├── kafka-deployment.yaml   # Kafka StatefulSet
 │   │   ├── minio-deployment.yaml   # MinIO Deployment
-│   │   ├── lakekeeper.yaml        # Lakekeeper REST Catalog
-│   │   └── trino-iceberg.yaml     # Trino + Hive Metastore
+│   │   ├── postgres-postgis.yaml   # PostgreSQL with PostGIS
+│   │   ├── iceberg-rest-catalog.yaml  # Apache Polaris REST Catalog
+│   │   └── trino-rest.yaml            # Trino with Polaris
 │   └── pipelines/                  # Data pipelines
 │       └── image-pipeline.yaml    # Image processing pipeline
 ├── queries/                        # SQL queries
@@ -485,21 +482,22 @@ data-platform/
 │   └── postgis-examples.sql       # PostGIS geospatial queries
 ├── scripts/                        # Python scripts
 │   ├── image_consumer.py          # Kafka consumer (images → S3 + DB)
-│   ├── image_producer.py          # File watcher (folder → Kafka)
-│   └── stream_logic.py            # Spark streaming example
+│   └── image_producer.py          # File watcher (folder → Kafka)
 ├── images/                         # Image storage (local testing)
 │   └── incoming/                  # Watch folder for new images
 ├── logs/                          # Application logs
 ├── .venv/                         # Python virtual environment
+├── .env.example                   # Environment variables template
+├── .gitignore                     # Git ignore patterns
 ├── install-platform.sh            # Main installation script
 ├── delete-platform.sh             # Cleanup script
 ├── test-platform.sh               # Test suite
 ├── setup-portforward.sh           # Setup port-forwards for local dev
 ├── run-pipeline.sh                # Run pipeline locally
 ├── deploy-pipeline.sh             # Deploy pipeline to K8s
+├── upload-images.sh               # Upload test images to pipeline
 ├── query-trino.sh                 # Query Trino/Iceberg
 ├── requirements.txt               # Python dependencies
-├── .env.example                   # Environment variables template
 └── README.md                      # This file
 ```
 
@@ -550,7 +548,7 @@ This platform demonstrates:
 - ✅ Message-driven architecture with Kafka
 - ✅ Object storage with MinIO (S3-compatible)
 - ✅ Data lakehouse with Apache Iceberg
-- ✅ REST catalog pattern with Lakekeeper
+- ✅ REST catalog pattern with Apache Polaris
 - ✅ Distributed SQL with Trino
 - ✅ Geospatial data processing with PostGIS
 - ✅ Workflow orchestration with Airflow

@@ -81,6 +81,82 @@ kubectl get pods -n airflow
 echo "⏳ Waiting for Airflow to be ready..."
 kubectl wait --for=condition=ready pod -l component=scheduler --namespace airflow --timeout=600s
 
+echo "📄 Creating Airflow DAG ConfigMap..."
+kubectl create configmap airflow-dags --from-file=dags/ -n airflow
+
+echo "🔄 Configuring Airflow to load DAGs..."
+# Create Helm values file for DAG mounting
+cat > /tmp/airflow-dag-config.yaml <<AIRFLOW_CONFIG
+extraPipPackages:
+  - apache-airflow-providers-postgres==5.13.0
+  - confluent-kafka==2.6.0
+  - Pillow==11.0.0
+
+scheduler:
+  extraInitContainers:
+    - name: copy-dags
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+        - |
+          mkdir -p /opt/airflow/dags
+          cp /dags-source/* /opt/airflow/dags/ 2>/dev/null || true
+          ls -la /opt/airflow/dags/
+      volumeMounts:
+        - name: dags-source
+          mountPath: /dags-source
+        - name: dags
+          mountPath: /opt/airflow/dags
+  extraVolumes:
+    - name: dags-source
+      configMap:
+        name: airflow-dags
+    - name: dags
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: dags
+      mountPath: /opt/airflow/dags
+
+dagProcessor:
+  extraInitContainers:
+    - name: copy-dags
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+        - |
+          mkdir -p /opt/airflow/dags
+          cp /dags-source/* /opt/airflow/dags/ 2>/dev/null || true
+          ls -la /opt/airflow/dags/
+      volumeMounts:
+        - name: dags-source
+          mountPath: /dags-source
+        - name: dags
+          mountPath: /opt/airflow/dags
+  extraVolumes:
+    - name: dags-source
+      configMap:
+        name: airflow-dags
+    - name: dags
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: dags
+      mountPath: /opt/airflow/dags
+AIRFLOW_CONFIG
+
+echo "🔄 Upgrading Airflow with DAG configuration..."
+helm upgrade airflow apache-airflow/airflow \
+  --namespace airflow \
+  -f /tmp/airflow-dag-config.yaml \
+  --reuse-values \
+  --timeout 10m
+
+echo "⏳ Waiting for Airflow scheduler to restart with DAGs..."
+kubectl rollout status statefulset airflow-scheduler -n airflow --timeout=300s
+
+echo "✅ Airflow DAGs configured successfully!"
+
 echo "✨ 5. Installing Spark Operator (for Sedona processing)..."
 for i in {1..3}; do
   if helm install spark-operator spark-operator/spark-operator \
@@ -93,17 +169,21 @@ for i in {1..3}; do
   fi
 done
 
-echo "🏔️ 6. Installing Trino + Hive Metastore (Iceberg)..."
-# Initialize Hive Metastore schema
-kubectl apply -f manifests/deployments/hive-schema-init.yaml
-echo "⏳ Waiting for schema initialization..."
-kubectl wait --for=condition=complete --timeout=120s job/hive-schema-init || echo "Schema init pending..."
+echo "🏔️ 6. Installing Apache Polaris + Trino (Iceberg)..."
+echo "📋 Deploying Apache Polaris REST Catalog..."
+kubectl apply -f manifests/deployments/iceberg-rest-catalog.yaml
 
-# Deploy Trino with Iceberg + Hive Metastore
-kubectl apply -f manifests/deployments/trino-iceberg.yaml
+echo "⏳ Waiting for Apache Polaris to be ready (this may take 2-3 minutes)..."
+kubectl wait --for=condition=ready pod -l app=iceberg-rest --timeout=300s
 
-echo "⏳ Waiting for Trino and Hive Metastore..."
-kubectl wait --for=condition=available deployment/trino --timeout=300s || echo "Trino deployment pending..."
-kubectl wait --for=condition=available deployment/hive-metastore --timeout=300s || echo "Hive Metastore pending..."
+echo "✅ Apache Polaris is ready!"
+
+echo "📋 Deploying Trino with Polaris REST catalog..."
+kubectl apply -f manifests/deployments/trino-rest.yaml
+
+echo "⏳ Waiting for Trino to be ready (this may take 2-3 minutes)..."
+kubectl wait --for=condition=ready pod -l app=trino --timeout=300s
+
+echo "✅ Trino is ready!"
 
 echo "✅ Deployment complete! Waiting for pods to initialize..."
