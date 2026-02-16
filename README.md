@@ -1,6 +1,6 @@
 # Local Data Platform - Setup Guide
 
-A complete local data platform with PostgreSQL, MinIO (S3), Kafka, Airflow, and Spark running on Kubernetes (Kind).
+A complete local data platform with PostgreSQL, MinIO (S3), Kafka, Airflow, Spark Operator, Lakekeeper (Iceberg REST), and Apache Doris running on Kubernetes (Kind).
 
 ## 🎯 Overview
 
@@ -9,8 +9,8 @@ This platform includes:
 - **MinIO** - S3-compatible object storage
 - **Kafka** - Message broker for streaming
 - **Apache Iceberg** - Table format for data lakes
-- **Apache Polaris** - REST catalog for Iceberg
-- **Trino** - Distributed SQL query engine
+- **Lakekeeper** - REST catalog for Iceberg
+- **Apache Doris** - MPP analytical database
 - **Airflow** - Workflow orchestration
 - **Spark Operator** - Big data processing
 - **Image Pipeline** - Automated image ingestion system
@@ -84,14 +84,14 @@ cd ~/Documents/data-platform
 ```
 
 **What this does:**
-- Creates a 3-node Kind cluster
+- Creates a Kind cluster (1 control-plane + 3 workers)
 - Installs PostgreSQL with PostGIS (geospatial database)
 - Installs MinIO (object storage)
 - Installs Kafka (message broker)
-- Installs Apache Polaris (Iceberg REST catalog)
-- Installs Trino (query engine)
-- Installs Airflow (orchestration)
-- Installs Spark Operator (data processing)
+- Installs Airflow via Helm (and loads DAGs from `dags/`)
+- Installs Spark Operator via Helm
+- Installs Lakekeeper (Iceberg REST catalog)
+- Installs Apache Doris (query engine)
 
 **Duration:** ~5-10 minutes
 
@@ -113,8 +113,8 @@ cd ~/Documents/data-platform
 - ✓ Cluster is running
 - ✓ All pods are healthy
 - ✓ PostgreSQL connection + PostGIS extension
-- ✓ Apache Polaris REST catalog
-- ✓ Trino query engine
+- ✓ Lakekeeper REST catalog
+- ✓ Apache Doris query engine
 - ✓ MinIO storage access
 - ✓ Kafka broker connectivity
 - ✓ Airflow is operational
@@ -130,10 +130,12 @@ cd ~/Documents/data-platform
 ### Step 3: Setup Python Environment
 
 ```bash
-# Create virtual environment (done automatically on first run)
-# Install dependencies
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# Local pipeline + Airflow DAGs import `from kafka import ...`
+pip install kafka-python-ng==2.2.2
 ```
 
 ---
@@ -148,13 +150,15 @@ pip install -r requirements.txt
 
 # Terminal 2: Start the pipeline
 source .venv/bin/activate
-export POSTGRES_PASSWORD=$(kubectl get secret postgres-postgresql -o jsonpath="{.data.postgres-password}" | base64 -d)
+# `setup-portforward.sh` already exports POSTGRES_PASSWORD.
+# If you didn't run it, you can set it manually:
+# export POSTGRES_PASSWORD=$(kubectl get secret postgres-postgresql -o jsonpath="{.data.postgres-password}" | base64 -d)
 
 # Start consumer
-python scripts/image_consumer.py &
+python manifests/streaming/image_consumer.py &
 
 # Start producer
-python scripts/image_producer.py &
+python manifests/streaming/image_producer.py &
 
 # Terminal 3: Add test images
 cp ~/Pictures/test-image.jpg images/incoming/
@@ -163,8 +167,8 @@ cp ~/Pictures/test-image.jpg images/incoming/
 #### Option B: Run in Kubernetes (recommended)
 
 ```bash
-# Deploy pipeline to cluster
-./deploy-pipeline.sh
+# Deploy streaming pipeline to cluster
+./deploy-streaming.sh
 
 # Upload test image
 PRODUCER_POD=$(kubectl get pod -l app=image-producer -o jsonpath='{.items[0].metadata.name}')
@@ -220,26 +224,27 @@ LIMIT 5;
 
 **Example PostGIS queries:** See [queries/postgis-examples.sql](queries/postgis-examples.sql)
 
-#### Trino Query Engine
+#### Apache Doris Query Engine
 ```bash
-kubectl port-forward svc/trino 8080:8080
+kubectl port-forward svc/doris-fe 9030:9030 8030:8030
 ```
-- URL: http://localhost:8080
-- Or use CLI: `./query-trino.sh`
+- MySQL Protocol: localhost:9030
+- Web UI: http://localhost:8030
+- Username: `root` (no password by default)
 
-**Example Trino queries:**
+**Example Doris queries:**
 ```bash
-# List catalogs
-./query-trino.sh
+# Connect via MySQL client
+mysql -h 127.0.0.1 -P 9030 -u root
 
-# Interactive mode
-trino --server http://localhost:8080
+# Show databases
+SHOW DATABASES;
 
-# Query Iceberg tables
-trino --server http://localhost:8080 --catalog iceberg --schema data_lake
+# Query Iceberg tables (via Iceberg catalog)
+SHOW CATALOGS;
 ```
 
-#### Apache Polaris REST Catalog
+#### Lakekeeper REST Catalog
 ```bash
 kubectl port-forward svc/iceberg-rest 8181:8181
 ```
@@ -260,6 +265,13 @@ kubectl port-forward svc/iceberg-rest 8181:8181
 4. **MinIO** → Stores images in S3 bucket (date-partitioned)
 5. **PostgreSQL** → Records metadata (filename, hash, size, S3 path)
 
+### Architecture
+
+- **Python Scripts**: Located in `manifests/streaming/`
+- **ConfigMap Generation**: Scripts loaded dynamically via `deploy-streaming.sh`
+- **No Code Duplication**: Single source of truth for Python code
+- **Easy Updates**: Edit `.py` files, run `./deploy-streaming.sh` to redeploy
+
 ### Test the Pipeline
 
 ```bash
@@ -278,8 +290,14 @@ tail -f logs/producer.log
 
 **Check S3 Storage:**
 ```bash
-kubectl exec $(kubectl get pod -l app=minio -o jsonpath="{.items[0].metadata.name}") -- \
-  ls -lh /data/images/2026/02/11/
+# MinIO stores objects inside the container; easiest is to use the Console:
+#   kubectl port-forward svc/minio 9001:9001
+#   then browse to http://localhost:9001 (admin/minio_password)
+#
+# Or list via MinIO client (mc):
+kubectl port-forward svc/minio 9000:9000 &
+mc alias set local http://localhost:9000 admin minio_password
+mc ls -r local/images
 ```
 
 **Check Database:**
@@ -414,26 +432,14 @@ kubectl logs <spark-driver-pod>
 # Copy DAG to Airflow
 SCHEDULER_POD=$(kubectl get pod -n airflow -l component=scheduler -o jsonpath="{.items[0].metadata.name}")
 
-# Deploy Image Pipeline DAG
-kubectl cp dags/image_processing_pipeline_dag.py airflow/$SCHEDULER_POD:/opt/airflow/dags/
-
 # Wait for Airflow to discover DAGs (30 seconds)
 sleep 30
 
 # List DAGs
 kubectl exec -n airflow $SCHEDULER_POD -- airflow dags list
-
-# Trigger Image Pipeline DAG
-kubectl exec -n airflow $SCHEDULER_POD -- airflow dags trigger image_processing_pipeline
 ```
 
-**Image Pipeline DAG Features:**
-- ✅ Health checks for Kafka, MinIO, PostgreSQL
-- ✅ Kafka consumer lag monitoring
-- ✅ Auto-scaling alerts when lag is high
-- ✅ Daily statistics and reports
-- ✅ Latest images summary
-- ✅ Runs every 5 minutes
+
 
 ---
 
@@ -446,7 +452,8 @@ pkill -f image_consumer.py
 pkill -f image_producer.py
 
 # Kubernetes pipeline
-kubectl delete -f manifests/pipelines/image-pipeline.yaml
+kubectl delete -f manifests/streaming/image-pipeline.yaml
+kubectl delete configmap image-pipeline-scripts
 ```
 
 ### Delete Entire Platform
@@ -466,37 +473,36 @@ This will:
 ```
 data-platform/
 ├── dags/                           # Airflow DAG definitions
-│   ├── image_processing_pipeline_dag.py  # Image pipeline monitoring
 │   └── image_processing_etl_dag.py # Image ETL processing
 ├── manifests/                      # Kubernetes manifests
 │   ├── deployments/                # Infrastructure deployments
 │   │   ├── kafka-deployment.yaml   # Kafka StatefulSet
 │   │   ├── minio-deployment.yaml   # MinIO Deployment
 │   │   ├── postgres-postgis.yaml   # PostgreSQL with PostGIS
-│   │   ├── iceberg-rest-catalog.yaml  # Apache Polaris REST Catalog
-│   │   └── trino-rest.yaml            # Trino with Polaris
-│   └── pipelines/                  # Data pipelines
-│       └── image-pipeline.yaml    # Image processing pipeline
+│   │   ├── iceberg-rest-catalog.yaml  # Lakekeeper REST Catalog
+│   │   └── doris.yaml                 # Apache Doris (unified image)
+│   └── streaming/                  # Real-time event processing
+│       ├── image-pipeline.yaml    # Image processing pipeline
+│       ├── image_consumer.py      # Kafka consumer (images → S3 + DB)
+│       └── image_producer.py      # File watcher (folder → Kafka)
 ├── queries/                        # SQL queries
-│   ├── iceberg-examples.sql       # Iceberg/Trino examples
+│   ├── iceberg-examples.sql       # Iceberg/Doris examples
 │   └── postgis-examples.sql       # PostGIS geospatial queries
-├── scripts/                        # Python scripts
-│   ├── image_consumer.py          # Kafka consumer (images → S3 + DB)
-│   └── image_producer.py          # File watcher (folder → Kafka)
 ├── images/                         # Image storage (local testing)
 │   └── incoming/                  # Watch folder for new images
 ├── logs/                          # Application logs
 ├── .venv/                         # Python virtual environment
 ├── .env.example                   # Environment variables template
 ├── .gitignore                     # Git ignore patterns
+├── doris-values.yaml              # Optional Helm values (manual Helm install/upgrade)
 ├── install-platform.sh            # Main installation script
 ├── delete-platform.sh             # Cleanup script
 ├── test-platform.sh               # Test suite
 ├── setup-portforward.sh           # Setup port-forwards for local dev
 ├── run-pipeline.sh                # Run pipeline locally
-├── deploy-pipeline.sh             # Deploy pipeline to K8s
+├── deploy-streaming.sh            # Deploy streaming pipeline to K8s
 ├── upload-images.sh               # Upload test images to pipeline
-├── query-trino.sh                 # Query Trino/Iceberg
+├── query-doris.sh                 # Query Doris/Iceberg
 ├── requirements.txt               # Python dependencies
 └── README.md                      # This file
 ```
@@ -540,16 +546,14 @@ kubectl get secret postgres-postgresql -o jsonpath="{.data.postgres-password}" |
 ## 🎓 What You Can Learn
 
 This platform demonstrates:
-- ✅ Data lakehouse with Apache Iceberg
-This platform demonstrates:
 - ✅ Kubernetes cluster management with Kind
 - ✅ Helm chart deployments
 - ✅ Microservices architecture
 - ✅ Message-driven architecture with Kafka
 - ✅ Object storage with MinIO (S3-compatible)
 - ✅ Data lakehouse with Apache Iceberg
-- ✅ REST catalog pattern with Apache Polaris
-- ✅ Distributed SQL with Trino
+- ✅ REST catalog pattern with Lakekeeper
+- ✅ Distributed SQL with Apache Doris
 - ✅ Geospatial data processing with PostGIS
 - ✅ Workflow orchestration with Airflow
 - ✅ Big data processing with Spark
@@ -601,7 +605,7 @@ pkill -f port-forward
 - **Storage:** MinIO uses ephemeral storage (data lost on restart). For persistence, update the manifest.
 - **Resources:** Requires ~8GB RAM and 4 CPU cores for smooth operation.
 - **Network:** All services communicate via Kubernetes internal DNS.
-- **Scaling:** Increase consumer replicas in `manifests/pipelines/image-pipeline.yaml` for higher throughput.
+- **Scaling:** Increase consumer replicas in `manifests/streaming/image-pipeline.yaml` for higher throughput.
 
 ---
 

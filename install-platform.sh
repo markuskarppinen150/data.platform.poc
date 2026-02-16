@@ -3,6 +3,55 @@
 
 CLUSTER_NAME="data-platform"
 
+# Check kernel parameters required for Doris
+echo "🔍 Checking kernel parameters..."
+REQUIRED_INOTIFY_INSTANCES=512
+REQUIRED_INOTIFY_WATCHES=524288
+REQUIRED_MAX_MAP_COUNT=2000000
+
+CURRENT_INSTANCES=$(sysctl -n fs.inotify.max_user_instances)
+CURRENT_WATCHES=$(sysctl -n fs.inotify.max_user_watches)
+CURRENT_MAP_COUNT=$(sysctl -n vm.max_map_count)
+
+NEEDS_FIX=false
+
+if [ "$CURRENT_INSTANCES" -lt "$REQUIRED_INOTIFY_INSTANCES" ]; then
+  echo "⚠️  fs.inotify.max_user_instances is $CURRENT_INSTANCES (need $REQUIRED_INOTIFY_INSTANCES)"
+  NEEDS_FIX=true
+fi
+
+if [ "$CURRENT_WATCHES" -lt "$REQUIRED_INOTIFY_WATCHES" ]; then
+  echo "⚠️  fs.inotify.max_user_watches is $CURRENT_WATCHES (need $REQUIRED_INOTIFY_WATCHES)"
+  NEEDS_FIX=true
+fi
+
+if [ "$CURRENT_MAP_COUNT" -lt "$REQUIRED_MAX_MAP_COUNT" ]; then
+  echo "⚠️  vm.max_map_count is $CURRENT_MAP_COUNT (need $REQUIRED_MAX_MAP_COUNT)"
+  NEEDS_FIX=true
+fi
+
+if [ "$NEEDS_FIX" = true ]; then
+  echo ""
+  echo "❌ Kernel parameters need adjustment. Run these commands:"
+  echo ""
+  echo "  sudo sysctl -w fs.inotify.max_user_instances=$REQUIRED_INOTIFY_INSTANCES"
+  echo "  sudo sysctl -w fs.inotify.max_user_watches=$REQUIRED_INOTIFY_WATCHES"
+  echo "  sudo sysctl -w vm.max_map_count=$REQUIRED_MAX_MAP_COUNT"
+  echo ""
+  echo "To make them persistent across reboots:"
+  echo ""
+  echo "  sudo tee /etc/sysctl.d/99-data-platform.conf >/dev/null <<'EOF'"
+  echo "fs.inotify.max_user_instances=$REQUIRED_INOTIFY_INSTANCES"
+  echo "fs.inotify.max_user_watches=$REQUIRED_INOTIFY_WATCHES"
+  echo "vm.max_map_count=$REQUIRED_MAX_MAP_COUNT"
+  echo "EOF"
+  echo "  sudo sysctl --system"
+  echo ""
+  exit 1
+fi
+
+echo "✅ Kernel parameters are properly configured"
+
 echo "🚀 Creating 3-node Kind cluster..."
 cat <<EOF | kind create cluster --name $CLUSTER_NAME --config=-
 kind: Cluster
@@ -169,21 +218,27 @@ for i in {1..3}; do
   fi
 done
 
-echo "🏔️ 6. Installing Apache Polaris + Trino (Iceberg)..."
-echo "📋 Deploying Apache Polaris REST Catalog..."
+echo "🧊 6. Installing Iceberg REST Catalog (Lakekeeper)..."
+# Create the lakekeeper-config secret with PostgreSQL connection URL
+kubectl create secret generic lakekeeper-config \
+  --from-literal=database-url="postgresql://postgres:${POSTGRES_PASSWORD}@postgres-postgresql.default.svc.cluster.local:5432/iceberg_catalog"
+
 kubectl apply -f manifests/deployments/iceberg-rest-catalog.yaml
 
-echo "⏳ Waiting for Apache Polaris to be ready (this may take 2-3 minutes)..."
+echo "⏳ Waiting for Iceberg REST catalog to be ready..."
 kubectl wait --for=condition=ready pod -l app=iceberg-rest --timeout=300s
 
-echo "✅ Apache Polaris is ready!"
+echo "✅ Iceberg REST catalog is ready!"
 
-echo "📋 Deploying Trino with Polaris REST catalog..."
-kubectl apply -f manifests/deployments/trino-rest.yaml
+echo "🏔️ 7. Installing Apache Doris (SQL Query Engine)..."
+kubectl apply -f manifests/deployments/doris.yaml
 
-echo "⏳ Waiting for Trino to be ready (this may take 2-3 minutes)..."
-kubectl wait --for=condition=ready pod -l app=trino --timeout=300s
+echo "⏳ Waiting for Apache Doris FE to be ready..."
+kubectl wait --for=condition=ready pod -l app=doris-fe --timeout=300s
 
-echo "✅ Trino is ready!"
+echo "⏳ Waiting for Apache Doris BE to be ready..."
+kubectl wait --for=condition=ready pod -l app=doris-be --timeout=300s
+
+echo "✅ Apache Doris is ready!"
 
 echo "✅ Deployment complete! Waiting for pods to initialize..."
