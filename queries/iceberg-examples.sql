@@ -1,4 +1,4 @@
--- Example Iceberg queries for Trino with Apache Polaris REST Catalog
+-- Example Iceberg queries for Apache Doris with Lakekeeper REST Catalog
 
 -- 1. Show available catalogs
 SHOW CATALOGS;
@@ -28,7 +28,7 @@ WITH (
 );
 
 -- 3. Insert data from PostgreSQL to Iceberg
--- (Using Trino's PostgreSQL connector)
+-- (Using Doris's PostgreSQL catalog)
 INSERT INTO iceberg.data_lake.images
 SELECT 
     id,
