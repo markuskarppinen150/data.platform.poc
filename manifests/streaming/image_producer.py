@@ -80,13 +80,15 @@ class ImageHandler:
             'timestamp': datetime.now().isoformat(),
             'image_data': base64.b64encode(image_data).decode('utf-8')
         }
+
+        payload = json.dumps(message).encode('utf-8')
         
         # Send to Kafka
         try:
             future = self.producer.send(
                 self.topic,
                 key=image_hash.encode('utf-8'),
-                value=json.dumps(message).encode('utf-8')
+                value=payload
             )
             
             # Wait for confirmation
@@ -100,7 +102,10 @@ class ImageHandler:
             )
             
         except Exception as e:
-            logger.error(f"Failed to send {file_path.name} to Kafka: {e}")
+            logger.error(
+                f"Failed to send {file_path.name} to Kafka: {e} "
+                f"(file_size={file_stats.st_size} bytes, kafka_payload={len(payload)} bytes)"
+            )
             raise
     
     @staticmethod
@@ -138,7 +143,7 @@ def main():
     # Initialize Kafka producer
     producer = KafkaProducer(
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS.split(','),
-        max_request_size=10485760,  # 10MB
+        max_request_size=26214400,  # 25MiB (payload includes base64 + JSON overhead)
         compression_type='gzip',
         acks='all',
         retries=3

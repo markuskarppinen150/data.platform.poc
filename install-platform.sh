@@ -21,6 +21,7 @@ if [ "$CURRENT_INSTANCES" -lt "$REQUIRED_INOTIFY_INSTANCES" ]; then
 fi
 
 if [ "$CURRENT_WATCHES" -lt "$REQUIRED_INOTIFY_WATCHES" ]; then
+
   echo "⚠️  fs.inotify.max_user_watches is $CURRENT_WATCHES (need $REQUIRED_INOTIFY_WATCHES)"
   NEEDS_FIX=true
 fi
@@ -75,11 +76,11 @@ kubectl apply -f manifests/deployments/postgres-postgis.yaml
 echo "⏳ Waiting for PostgreSQL to be ready..."
 kubectl wait --for=condition=ready pod -l app=postgresql --timeout=300s
 
-echo "☁️ 2. Installing MinIO (S3-compatible Object Storage)..."
-kubectl apply -f manifests/deployments/minio-deployment.yaml
+echo "☁️ 2. Installing RustFS (S3-compatible Object Storage)..."
+kubectl apply -f manifests/deployments/rustfs-deployment.yaml
 
-echo "⏳ Waiting for MinIO to be ready..."
-kubectl wait --for=condition=ready pod -l app=minio --timeout=300s
+echo "⏳ Waiting for RustFS to be ready..."
+kubectl wait --for=condition=ready pod -l app=rustfs --timeout=300s
 
 echo "🎢 3. Installing Apache Kafka (Message Broker)..."
 kubectl apply -f manifests/deployments/kafka-deployment.yaml

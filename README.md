@@ -1,12 +1,12 @@
 # Local Data Platform - Setup Guide
 
-A complete local data platform with PostgreSQL, MinIO (S3), Kafka, Airflow, Spark Operator, Lakekeeper (Iceberg REST), and Apache Doris running on Kubernetes (Kind).
+A complete local data platform with PostgreSQL, RustFS (S3), Kafka, Airflow, Spark Operator, Lakekeeper (Iceberg REST), and Apache Doris running on Kubernetes (Kind).
 
 ## 🎯 Overview
 
 This platform includes:
 - **PostgreSQL + PostGIS** - Relational database with geospatial capabilities
-- **MinIO** - S3-compatible object storage
+- **RustFS** - S3-compatible object storage
 - **Kafka** - Message broker for streaming
 - **Apache Iceberg** - Table format for data lakes
 - **Lakekeeper** - REST catalog for Iceberg
@@ -86,7 +86,7 @@ cd ~/Documents/data-platform
 **What this does:**
 - Creates a Kind cluster (1 control-plane + 3 workers)
 - Installs PostgreSQL with PostGIS (geospatial database)
-- Installs MinIO (object storage)
+- Installs RustFS (object storage)
 - Installs Kafka (message broker)
 - Installs Airflow via Helm (and loads DAGs from `dags/`)
 - Installs Spark Operator via Helm
@@ -115,7 +115,7 @@ cd ~/Documents/data-platform
 - ✓ PostgreSQL connection + PostGIS extension
 - ✓ Lakekeeper REST catalog
 - ✓ Apache Doris query engine
-- ✓ MinIO storage access
+- ✓ RustFS storage access
 - ✓ Kafka broker connectivity
 - ✓ Airflow is operational
 - ✓ Spark Operator CRDs
@@ -190,9 +190,9 @@ kubectl port-forward svc/airflow-api-server 8080:8080 -n airflow
 - Username: `admin`
 - Password: `admin`
 
-#### MinIO Console
+#### RustFS Console
 ```bash
-kubectl port-forward svc/minio 9001:9001
+kubectl port-forward svc/rustfs 9001:9001
 ```
 - URL: http://localhost:9001
 - Username: `admin`
@@ -262,7 +262,7 @@ kubectl port-forward svc/iceberg-rest 8181:8181
 1. **Watch Folder** → Producer monitors `images/incoming/`
 2. **Kafka** → Images sent as base64-encoded messages
 3. **Consumer** → Reads from Kafka, processes images
-4. **MinIO** → Stores images in S3 bucket (date-partitioned)
+4. **RustFS** → Stores images in S3 bucket (date-partitioned)
 5. **PostgreSQL** → Records metadata (filename, hash, size, S3 path)
 
 ### Architecture
@@ -290,12 +290,12 @@ tail -f logs/producer.log
 
 **Check S3 Storage:**
 ```bash
-# MinIO stores objects inside the container; easiest is to use the Console:
-#   kubectl port-forward svc/minio 9001:9001
+# RustFS stores objects inside the container; easiest is to use the Console:
+#   kubectl port-forward svc/rustfs 9001:9001
 #   then browse to http://localhost:9001 (admin/minio_password)
 #
 # Or list via MinIO client (mc):
-kubectl port-forward svc/minio 9000:9000 &
+kubectl port-forward svc/rustfs 9000:9000 &
 mc alias set local http://localhost:9000 admin minio_password
 mc ls -r local/images
 ```
@@ -307,7 +307,7 @@ kubectl exec postgres-postgresql-0 -- \
   psql -U postgres -c "SELECT filename, file_size, s3_path, uploaded_at FROM image_metadata ORDER BY uploaded_at DESC LIMIT 10;"
 ```
 
-**Using MinIO Client:**
+**Using S3 client (mc):**
 ```bash
 # Install mc
 wget https://dl.min.io/client/mc/release/linux-amd64/mc
@@ -315,7 +315,7 @@ chmod +x mc
 sudo mv mc /usr/local/bin/
 
 # Configure
-kubectl port-forward svc/minio 9000:9000 &
+kubectl port-forward svc/rustfs 9000:9000 &
 mc alias set local http://localhost:9000 admin minio_password
 
 # List files
@@ -332,7 +332,7 @@ mc ls -r local/images/
 kubectl get pods --all-namespaces
 
 # Specific components
-kubectl get pods -l app=minio
+kubectl get pods -l app=rustfs
 kubectl get pods -l app=kafka
 kubectl get pods -n airflow
 ```
@@ -342,8 +342,8 @@ kubectl get pods -n airflow
 # Kafka
 kubectl logs kafka-0
 
-# MinIO
-kubectl logs -l app=minio
+# RustFS
+kubectl logs -l app=rustfs
 
 # Airflow Scheduler
 kubectl logs -n airflow -l component=scheduler
@@ -387,14 +387,14 @@ kubectl delete pod kafka-0
 kubectl wait --for=condition=ready pod/kafka-0
 ```
 
-#### MinIO Not Accessible
+#### RustFS Not Accessible
 ```bash
-# Check MinIO status
-kubectl get pods -l app=minio
-kubectl describe pod -l app=minio
+# Check RustFS status
+kubectl get pods -l app=rustfs
+kubectl describe pod -l app=rustfs
 
 # Check service
-kubectl get svc minio
+kubectl get svc rustfs
 ```
 
 #### Image Pipeline Errors
@@ -477,7 +477,7 @@ data-platform/
 ├── manifests/                      # Kubernetes manifests
 │   ├── deployments/                # Infrastructure deployments
 │   │   ├── kafka-deployment.yaml   # Kafka StatefulSet
-│   │   ├── minio-deployment.yaml   # MinIO Deployment
+│   │   ├── rustfs-deployment.yaml  # RustFS Deployment
 │   │   ├── postgres-postgis.yaml   # PostgreSQL with PostGIS
 │   │   ├── iceberg-rest-catalog.yaml  # Lakekeeper REST Catalog
 │   │   └── doris.yaml                 # Apache Doris (unified image)
@@ -520,7 +520,7 @@ Copy `.env.example` to `.env` and customize:
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 KAFKA_TOPIC=image-uploads
 
-# MinIO
+# S3 (RustFS)
 MINIO_ENDPOINT=localhost:9000
 MINIO_ACCESS_KEY=admin
 MINIO_SECRET_KEY=minio_password
@@ -550,7 +550,7 @@ This platform demonstrates:
 - ✅ Helm chart deployments
 - ✅ Microservices architecture
 - ✅ Message-driven architecture with Kafka
-- ✅ Object storage with MinIO (S3-compatible)
+- ✅ Object storage with RustFS (S3-compatible)
 - ✅ Data lakehouse with Apache Iceberg
 - ✅ REST catalog pattern with Lakekeeper
 - ✅ Distributed SQL with Apache Doris
@@ -567,7 +567,7 @@ This platform demonstrates:
 
 - [Kind Documentation](https://kind.sigs.k8s.io/)
 - [Apache Kafka](https://kafka.apache.org/)
-- [MinIO Documentation](https://min.io/docs/)
+- [RustFS Documentation](https://docs.rustfs.com/)
 - [Apache Airflow](https://airflow.apache.org/)
 - [Apache Spark](https://spark.apache.org/)
 - [Kubernetes Documentation](https://kubernetes.io/docs/)
@@ -602,7 +602,7 @@ pkill -f port-forward
 
 ## 📝 Notes
 
-- **Storage:** MinIO uses ephemeral storage (data lost on restart). For persistence, update the manifest.
+- **Storage:** RustFS uses ephemeral storage (data lost on restart). For persistence, update the manifest.
 - **Resources:** Requires ~8GB RAM and 4 CPU cores for smooth operation.
 - **Network:** All services communicate via Kubernetes internal DNS.
 - **Scaling:** Increase consumer replicas in `manifests/streaming/image-pipeline.yaml` for higher throughput.

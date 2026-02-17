@@ -22,8 +22,8 @@ pkill -f "kubectl port-forward" || true
 kubectl port-forward svc/kafka 9092:9092 &
 KAFKA_PF_PID=$!
 
-kubectl port-forward svc/minio 9000:9000 &
-MINIO_PF_PID=$!
+kubectl port-forward svc/rustfs 9000:9000 &
+RUSTFS_PF_PID=$!
 
 kubectl port-forward svc/postgres-postgresql 5432:5432 &
 POSTGRES_PF_PID=$!
@@ -33,7 +33,7 @@ sleep 5
 
 echo "✅ Port forwards established"
 echo "   Kafka: localhost:9092"
-echo "   MinIO: localhost:9000"
+echo "   RustFS: localhost:9000"
 echo "   PostgreSQL: localhost:5432"
 echo ""
 
@@ -56,7 +56,7 @@ mkdir -p logs
 echo "📥 Starting Image Consumer..."
 export POSTGRES_PASSWORD
 source .venv/bin/activate
-.venv/bin/python scripts/image_consumer.py > logs/consumer.log 2>&1 &
+.venv/bin/python manifests/streaming/image_consumer.py > logs/consumer.log 2>&1 &
 CONSUMER_PID=$!
 echo "   Consumer PID: $CONSUMER_PID (logs: logs/consumer.log)"
 
@@ -65,7 +65,7 @@ sleep 3
 
 # Start Producer
 echo "📤 Starting Image Producer..."
-.venv/bin/python scripts/image_producer.py > logs/producer.log 2>&1 &
+.venv/bin/python manifests/streaming/image_producer.py > logs/producer.log 2>&1 &
 PRODUCER_PID=$!
 echo "   Producer PID: $PRODUCER_PID (logs: logs/producer.log)"
 
@@ -80,7 +80,7 @@ echo "📸 Add test images:"
 echo "   cp ~/Pictures/your-image.jpg images/incoming/"
 echo ""
 echo "🔍 Check S3 storage:"
-echo "   kubectl port-forward svc/minio 9001:9001"
+echo "   kubectl port-forward svc/rustfs 9001:9001"
 echo "   Open: http://localhost:9001 (admin/minio_password)"
 echo ""
 echo "🗄️  Check database:"
@@ -95,7 +95,7 @@ cleanup() {
     echo ""
     echo "🧹 Cleaning up..."
     kill $CONSUMER_PID $PRODUCER_PID 2>/dev/null || true
-    kill $KAFKA_PF_PID $MINIO_PF_PID $POSTGRES_PF_PID 2>/dev/null || true
+    kill $KAFKA_PF_PID $RUSTFS_PF_PID $POSTGRES_PF_PID 2>/dev/null || true
     pkill -f "kubectl port-forward" || true
     pkill -f "image_consumer.py" || true
     pkill -f "image_producer.py" || true

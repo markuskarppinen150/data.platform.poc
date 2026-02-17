@@ -42,7 +42,7 @@ echo ""
 echo "2️⃣  Pod Health Check"
 echo "-------------------"
 check_pods "default" "app.kubernetes.io/name=postgresql" "PostgreSQL"
-check_pods "default" "app=minio" "MinIO"
+check_pods "default" "app=rustfs" "RustFS"
 check_pods "default" "app=kafka" "Kafka"
 check_pods "airflow" "component=scheduler" "Airflow Scheduler"
 check_pods "airflow" "tier=airflow" "Airflow API Server"
@@ -89,17 +89,17 @@ else
     echo -e "${RED}✗ PostgreSQL connection failed${NC}"
 fi
 
-# 4. Test MinIO
+# 4. Test RustFS
 echo ""
-echo "4️⃣  MinIO Object Storage Test"
+echo "4️⃣  RustFS Object Storage Test"
 echo "----------------------------"
-MINIO_POD=$(kubectl get pod -l app=minio -o jsonpath="{.items[0].metadata.name}")
-if kubectl exec $MINIO_POD -- curl -f http://localhost:9000/minio/health/live > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ MinIO connection successful${NC}"
-    echo "  API: minio.default.svc.cluster.local:9000"
-    echo "  Console: Use 'kubectl port-forward svc/minio 9001:9001'"
+RUSTFS_POD=$(kubectl get pod -l app=rustfs -o jsonpath="{.items[0].metadata.name}")
+if kubectl exec $RUSTFS_POD -- curl -f http://localhost:9000/health > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ RustFS connection successful${NC}"
+    echo "  API: rustfs.default.svc.cluster.local:9000"
+    echo "  Console: Use 'kubectl port-forward svc/rustfs 9001:9001'"
 else
-    echo -e "${RED}✗ MinIO connection failed${NC}"
+    echo -e "${RED}✗ RustFS connection failed${NC}"
 fi
 
 # 5. Test Kafka
@@ -192,8 +192,8 @@ echo -e "${YELLOW}Airflow UI:${NC}"
 echo "  kubectl port-forward svc/airflow-api-server 8080:8080 -n airflow"
 echo "  → http://localhost:8080 (admin/admin)"
 echo ""
-echo -e "${YELLOW}MinIO Console:${NC}"
-echo "  kubectl port-forward svc/minio 9001:9001"
+echo -e "${YELLOW}RustFS Console:${NC}"
+echo "  kubectl port-forward svc/rustfs 9001:9001"
 echo "  → http://localhost:9001 (admin/minio_password)"
 echo ""
 echo -e "${YELLOW}PostgreSQL:${NC}"

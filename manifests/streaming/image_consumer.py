@@ -35,6 +35,8 @@ class ImageConsumer:
             group_id=kafka_group_id,
             auto_offset_reset='earliest',
             enable_auto_commit=True,
+            fetch_max_bytes=31457280,
+            max_partition_fetch_bytes=26214400,
             value_deserializer=lambda m: json.loads(m.decode('utf-8'))
         )
         

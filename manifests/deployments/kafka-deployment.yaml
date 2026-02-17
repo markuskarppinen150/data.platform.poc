@@ -79,6 +79,13 @@ spec:
           value: "1"
         - name: KAFKA_LOG_DIRS
           value: "/tmp/kraft-combined-logs"
+        # Allow larger messages (images are base64-encoded in JSON)
+        - name: KAFKA_MESSAGE_MAX_BYTES
+          value: "26214400" # 25 MiB
+        - name: KAFKA_REPLICA_FETCH_MAX_BYTES
+          value: "26214400" # 25 MiB
+        - name: KAFKA_SOCKET_REQUEST_MAX_BYTES
+          value: "26214400" # 25 MiB
         - name: CLUSTER_ID
           value: "MkU3OEVBNTcwNTJENDM2Qk"
         volumeMounts:
