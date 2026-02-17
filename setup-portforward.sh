@@ -5,7 +5,7 @@ echo "🔧 Setting up port forwards..."
 
 # Kill any existing port-forwards
 pkill -f "port-forward.*kafka" 2>/dev/null || true
-pkill -f "port-forward.*minio" 2>/dev/null || true
+pkill -f "port-forward.*rustfs" 2>/dev/null || true
 pkill -f "port-forward.*postgres" 2>/dev/null || true
 
 # Port forward Kafka
@@ -13,9 +13,9 @@ echo "📬 Port forwarding Kafka..."
 kubectl port-forward svc/kafka 9092:9092 > /dev/null 2>&1 &
 sleep 2
 
-# Port forward MinIO
-echo "💾 Port forwarding MinIO..."
-kubectl port-forward svc/minio 9000:9000 9001:9001 > /dev/null 2>&1 &
+# Port forward RustFS
+echo "💾 Port forwarding RustFS..."
+kubectl port-forward svc/rustfs 9000:9000 9001:9001 > /dev/null 2>&1 &
 sleep 2
 
 # Port forward PostgreSQL
@@ -43,8 +43,8 @@ echo "  POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
 echo ""
 echo "Services available at:"
 echo "  Kafka:      localhost:9092"
-echo "  MinIO API:  localhost:9000"
-echo "  MinIO UI:   localhost:9001"
+echo "  RustFS API: localhost:9000"
+echo "  RustFS UI:  localhost:9001"
 echo "  PostgreSQL: localhost:5432"
 echo ""
 echo "To stop port forwards: pkill -f 'port-forward'"
