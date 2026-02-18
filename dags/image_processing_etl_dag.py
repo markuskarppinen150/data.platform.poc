@@ -5,7 +5,7 @@ Actually processes images through the pipeline:
 1. Scan incoming folder for new images
 2. Produce messages to Kafka
 3. Trigger Spark job for image analysis (resize, metadata extraction, ML inference)
-4. Store results in PostgreSQL and RustFS
+4. Store results in PostgreSQL and SeaweedFS (S3)
 """
 from datetime import datetime, timedelta
 from airflow import DAG
@@ -117,7 +117,7 @@ def check_if_processing_needed(**context):
 
 
 def consume_and_store_images(**context):
-    """Consume from Kafka and store in RustFS (S3) + PostgreSQL"""
+    """Consume from Kafka and store in SeaweedFS (S3) + PostgreSQL"""
     from kafka import KafkaConsumer
     from minio import Minio
     import json
@@ -134,7 +134,7 @@ def consume_and_store_images(**context):
     )
     
     minio_client = Minio(
-        'rustfs.default.svc.cluster.local:9000',
+        'seaweedfs-s3.default.svc.cluster.local:8333',
         access_key='admin',
         secret_key='minio_password',
         secure=False
@@ -161,7 +161,7 @@ def consume_and_store_images(**context):
             with open(processing_path, 'rb') as f:
                 image_data = f.read()
             
-            # Upload to S3 (RustFS)
+            # Upload to S3 (SeaweedFS)
             date_prefix = datetime.now().strftime('%Y/%m/%d')
             s3_path = f'{date_prefix}/{filename}'
             

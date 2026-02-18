@@ -22,8 +22,11 @@ pkill -f "kubectl port-forward" || true
 kubectl port-forward svc/kafka 9092:9092 &
 KAFKA_PF_PID=$!
 
-kubectl port-forward svc/rustfs 9000:9000 &
-RUSTFS_PF_PID=$!
+kubectl port-forward svc/seaweedfs-s3 9000:8333 &
+SEAWEEDFS_S3_PF_PID=$!
+
+kubectl port-forward svc/seaweedfs-filer 9001:8888 &
+SEAWEEDFS_FILER_PF_PID=$!
 
 kubectl port-forward svc/postgres-postgresql 5432:5432 &
 POSTGRES_PF_PID=$!
@@ -33,7 +36,8 @@ sleep 5
 
 echo "✅ Port forwards established"
 echo "   Kafka: localhost:9092"
-echo "   RustFS: localhost:9000"
+echo "   SeaweedFS S3: localhost:9000"
+echo "   SeaweedFS Filer UI: localhost:9001"
 echo "   PostgreSQL: localhost:5432"
 echo ""
 
@@ -80,8 +84,7 @@ echo "📸 Add test images:"
 echo "   cp ~/Pictures/your-image.jpg images/incoming/"
 echo ""
 echo "🔍 Check S3 storage:"
-echo "   kubectl port-forward svc/rustfs 9001:9001"
-echo "   Open: http://localhost:9001 (admin/minio_password)"
+echo "   SeaweedFS Filer UI: http://localhost:9001"
 echo ""
 echo "🗄️  Check database:"
 echo "   kubectl port-forward svc/postgres-postgresql 5432:5432"
@@ -95,7 +98,7 @@ cleanup() {
     echo ""
     echo "🧹 Cleaning up..."
     kill $CONSUMER_PID $PRODUCER_PID 2>/dev/null || true
-    kill $KAFKA_PF_PID $RUSTFS_PF_PID $POSTGRES_PF_PID 2>/dev/null || true
+    kill $KAFKA_PF_PID $SEAWEEDFS_S3_PF_PID $SEAWEEDFS_FILER_PF_PID $POSTGRES_PF_PID 2>/dev/null || true
     pkill -f "kubectl port-forward" || true
     pkill -f "image_consumer.py" || true
     pkill -f "image_producer.py" || true

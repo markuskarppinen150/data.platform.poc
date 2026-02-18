@@ -41,17 +41,17 @@ spec:
               sleep 3
             done
             echo "PostgreSQL is ready!"
-      - name: wait-for-rustfs
+      - name: wait-for-seaweedfs-s3
         image: busybox:1.36
         command:
           - sh
           - -c
           - |
-            until nc -z rustfs.default.svc.cluster.local 9000; do
-              echo "Waiting for RustFS..."
+            until nc -z seaweedfs-s3.default.svc.cluster.local 8333; do
+              echo "Waiting for SeaweedFS S3 gateway..."
               sleep 3
             done
-            echo "RustFS is ready!"
+            echo "SeaweedFS S3 gateway is ready!"
       - name: init-catalog-db
         image: postgres:16
         env:
@@ -106,7 +106,7 @@ spec:
           value: "change-me-in-production-min-32-chars-required-for-encryption"
         # Storage configuration  
         - name: LAKEKEEPER__S3_ENDPOINT
-          value: "http://rustfs.default.svc.cluster.local:9000"
+          value: "http://seaweedfs-s3.default.svc.cluster.local:8333"
         - name: LAKEKEEPER__S3_ACCESS_KEY
           value: "admin"
         - name: LAKEKEEPER__S3_SECRET_KEY

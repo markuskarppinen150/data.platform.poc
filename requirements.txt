@@ -1,5 +1,5 @@
 # Core dependencies for image processing pipeline
-confluent-kafka==2.6.0
+kafka-python-ng==2.2.2
 minio==7.2.9
 psycopg2-binary==2.9.9
 Pillow==11.0.0

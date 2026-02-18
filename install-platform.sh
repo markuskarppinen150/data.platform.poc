@@ -76,11 +76,11 @@ kubectl apply -f manifests/deployments/postgres-postgis.yaml
 echo "⏳ Waiting for PostgreSQL to be ready..."
 kubectl wait --for=condition=ready pod -l app=postgresql --timeout=300s
 
-echo "☁️ 2. Installing RustFS (S3-compatible Object Storage)..."
-kubectl apply -f manifests/deployments/rustfs-deployment.yaml
+echo "☁️ 2. Installing SeaweedFS (S3-compatible Object Storage)..."
+kubectl apply -f manifests/deployments/seaweedfs-deployment.yaml
 
-echo "⏳ Waiting for RustFS to be ready..."
-kubectl wait --for=condition=ready pod -l app=rustfs --timeout=300s
+echo "⏳ Waiting for SeaweedFS to be ready..."
+kubectl wait --for=condition=ready pod -l app=seaweedfs --timeout=300s
 
 echo "🎢 3. Installing Apache Kafka (Message Broker)..."
 kubectl apply -f manifests/deployments/kafka-deployment.yaml
@@ -92,57 +92,53 @@ echo "🌬️ 4. Installing Apache Airflow (Orchestrator)..."
 # Get PostgreSQL connection details
 POSTGRES_PASSWORD=$(kubectl get secret postgres-postgresql -o jsonpath="{.data.postgres-password}" | base64 -d)
 
-helm install airflow apache-airflow/airflow \
-  --namespace airflow --create-namespace \
-  --set executor=LocalExecutor \
-  --set postgresql.enabled=false \
-  --set data.metadataConnection.user=postgres \
-  --set data.metadataConnection.pass=$POSTGRES_PASSWORD \
-  --set data.metadataConnection.host=postgres-postgresql.default.svc.cluster.local \
-  --set data.metadataConnection.port=5432 \
-  --set data.metadataConnection.db=postgres \
-  --set webserver.defaultUser.enabled=true \
-  --set webserver.defaultUser.username=admin \
-  --set webserver.defaultUser.password=admin \
-  --set webserver.replicas=1 \
-  --set scheduler.replicas=1 \
-  --set workers.replicas=0 \
-  --set redis.enabled=false \
-  --set statsd.enabled=false \
-  --set pgbouncer.enabled=false \
-  --set flower.enabled=false \
-  --set triggerer.enabled=false \
-  --set dags.gitSync.enabled=false \
-  --set webserver.resources.requests.cpu=100m \
-  --set webserver.resources.requests.memory=256Mi \
-  --set webserver.resources.limits.cpu=500m \
-  --set webserver.resources.limits.memory=512Mi \
-  --set scheduler.resources.requests.cpu=100m \
-  --set scheduler.resources.requests.memory=256Mi \
-  --set scheduler.resources.limits.cpu=500m \
-  --set scheduler.resources.limits.memory=512Mi \
-  --timeout 10m
+# Create namespace + DAG ConfigMap up-front so the Helm release can mount it on first install
+kubectl create namespace airflow --dry-run=client -o yaml | kubectl apply -f -
+echo "📄 Creating/Updating Airflow DAG ConfigMap..."
+kubectl create configmap airflow-dags --from-file=dags/ -n airflow --dry-run=client -o yaml | kubectl apply -f -
 
-echo "⏳ Waiting for Airflow pods to be created..."
-sleep 30
-echo "📋 Checking Airflow pods status:"
-kubectl get pods -n airflow
+echo "🔧 Preparing Airflow Helm values..."
+cat > /tmp/airflow-values.yaml <<AIRFLOW_CONFIG
+executor: LocalExecutor
 
-echo "⏳ Waiting for Airflow to be ready..."
-kubectl wait --for=condition=ready pod -l component=scheduler --namespace airflow --timeout=600s
+postgresql:
+  enabled: false
 
-echo "📄 Creating Airflow DAG ConfigMap..."
-kubectl create configmap airflow-dags --from-file=dags/ -n airflow
+data:
+  metadataConnection:
+    user: postgres
+    pass: "${POSTGRES_PASSWORD}"
+    host: postgres-postgresql.default.svc.cluster.local
+    port: 5432
+    db: postgres
 
-echo "🔄 Configuring Airflow to load DAGs..."
-# Create Helm values file for DAG mounting
-cat > /tmp/airflow-dag-config.yaml <<AIRFLOW_CONFIG
-extraPipPackages:
-  - apache-airflow-providers-postgres==5.13.0
-  - confluent-kafka==2.6.0
-  - Pillow==11.0.0
+webserver:
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    password: admin
+    email: admin@example.com
+    firstName: admin
+    lastName: user
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 scheduler:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
   extraInitContainers:
     - name: copy-dags
       image: busybox:latest
@@ -193,19 +189,65 @@ dagProcessor:
   extraVolumeMounts:
     - name: dags
       mountPath: /opt/airflow/dags
+
+workers:
+  replicas: 0
+
+redis:
+  enabled: false
+statsd:
+  enabled: false
+pgbouncer:
+  enabled: false
+flower:
+  enabled: false
+triggerer:
+  enabled: false
+
+dags:
+  gitSync:
+    enabled: false
+
+# Required for external PostgreSQL metadata DB (driver is not guaranteed in the base image)
+extraPipPackages:
+  - psycopg2-binary==2.9.9
+  - apache-airflow-providers-postgres==5.13.0
+  - kafka-python-ng==2.2.2
+  - minio==7.2.9
+  - Pillow==11.0.0
 AIRFLOW_CONFIG
 
-echo "🔄 Upgrading Airflow with DAG configuration..."
-helm upgrade airflow apache-airflow/airflow \
+echo "🚢 Installing/Upgrading Airflow via Helm..."
+if ! helm upgrade --install airflow apache-airflow/airflow \
   --namespace airflow \
-  -f /tmp/airflow-dag-config.yaml \
-  --reuse-values \
-  --timeout 10m
+  -f /tmp/airflow-values.yaml \
+  --timeout 15m; then
+  echo ""
+  echo "❌ Airflow Helm install/upgrade failed. Dumping diagnostics for hook jobs..."
+  echo ""
+  kubectl get pods -n airflow || true
+  kubectl get jobs -n airflow || true
 
-echo "⏳ Waiting for Airflow scheduler to restart with DAGs..."
-kubectl rollout status statefulset airflow-scheduler -n airflow --timeout=300s
+  echo ""
+  echo "--- airflow-create-user job ---"
+  kubectl describe job airflow-create-user -n airflow 2>/dev/null || true
+  kubectl logs -n airflow -l job-name=airflow-create-user --all-containers --tail=200 2>/dev/null || true
 
-echo "✅ Airflow DAGs configured successfully!"
+  echo ""
+  echo "--- airflow-migrate-database job ---"
+  kubectl describe job airflow-migrate-database -n airflow 2>/dev/null || true
+  kubectl logs -n airflow -l job-name=airflow-migrate-database --all-containers --tail=200 2>/dev/null || true
+
+  echo ""
+  echo "--- airflow namespace events (last 50) ---"
+  kubectl get events -n airflow --sort-by=.metadata.creationTimestamp 2>/dev/null | tail -n 50 || true
+  exit 1
+fi
+
+echo "⏳ Waiting for Airflow to be ready..."
+kubectl wait --for=condition=ready pod -l component=scheduler --namespace airflow --timeout=600s
+
+echo "✅ Airflow installed and DAGs configured successfully!"
 
 echo "✨ 5. Installing Spark Operator (for Sedona processing)..."
 for i in {1..3}; do

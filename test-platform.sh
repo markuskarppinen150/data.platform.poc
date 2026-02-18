@@ -42,7 +42,7 @@ echo ""
 echo "2️⃣  Pod Health Check"
 echo "-------------------"
 check_pods "default" "app.kubernetes.io/name=postgresql" "PostgreSQL"
-check_pods "default" "app=rustfs" "RustFS"
+check_pods "default" "app=seaweedfs" "SeaweedFS"
 check_pods "default" "app=kafka" "Kafka"
 check_pods "airflow" "component=scheduler" "Airflow Scheduler"
 check_pods "airflow" "tier=airflow" "Airflow API Server"
@@ -89,17 +89,24 @@ else
     echo -e "${RED}✗ PostgreSQL connection failed${NC}"
 fi
 
-# 4. Test RustFS
+# 4. Test SeaweedFS (S3)
 echo ""
-echo "4️⃣  RustFS Object Storage Test"
+echo "4️⃣  SeaweedFS Object Storage Test"
 echo "----------------------------"
-RUSTFS_POD=$(kubectl get pod -l app=rustfs -o jsonpath="{.items[0].metadata.name}")
-if kubectl exec $RUSTFS_POD -- curl -f http://localhost:9000/health > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ RustFS connection successful${NC}"
-    echo "  API: rustfs.default.svc.cluster.local:9000"
-    echo "  Console: Use 'kubectl port-forward svc/rustfs 9001:9001'"
+S3_PROBE_POD="seaweedfs-s3-probe-$(date +%s)"
+HTTP_CODE=$(kubectl run -q --rm -i --restart=Never "$S3_PROBE_POD" --image=curlimages/curl:8.6.0 \
+    --command -- sh -c "curl -s -o /dev/null -w '%{http_code}\n' http://seaweedfs-s3.default.svc.cluster.local:8333/ || echo 000" 2>/dev/null \
+    | tr -d '\r' \
+    | grep -E '^[0-9]{3}$' \
+    | tail -n 1)
+
+if [[ "$HTTP_CODE" =~ ^(200|403|404)$ ]]; then
+    echo -e "${GREEN}✓ SeaweedFS S3 gateway reachable (HTTP $HTTP_CODE)${NC}"
+    echo "  S3 API: seaweedfs-s3.default.svc.cluster.local:8333"
+    echo "  Filer UI: Use 'kubectl port-forward svc/seaweedfs-filer 9001:8888'"
 else
-    echo -e "${RED}✗ RustFS connection failed${NC}"
+    echo -e "${RED}✗ SeaweedFS S3 gateway probe failed${NC}"
+    echo "  Hint: kubectl logs deploy/seaweedfs -c s3 --tail=100"
 fi
 
 # 5. Test Kafka
@@ -136,14 +143,25 @@ fi
 echo ""
 echo "6️⃣  Airflow Orchestrator Test"
 echo "----------------------------"
-SCHEDULER_POD=$(kubectl get pod -n airflow -l component=scheduler -o jsonpath="{.items[0].metadata.name}")
-if kubectl exec -n airflow $SCHEDULER_POD -- airflow version > /dev/null 2>&1; then
-    AIRFLOW_VERSION=$(kubectl exec -n airflow $SCHEDULER_POD -- airflow version 2>/dev/null)
+SCHEDULER_POD=$(kubectl get pod -n airflow -l component=scheduler -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
+
+if [ -z "$SCHEDULER_POD" ]; then
+    echo -e "${RED}✗ Airflow scheduler pod not found${NC}"
+elif (
+    for i in {1..5}; do
+        if kubectl exec -n airflow "$SCHEDULER_POD" -c scheduler -- airflow version > /dev/null 2>&1; then
+            exit 0
+        fi
+        sleep 2
+    done
+    exit 1
+); then
+    AIRFLOW_VERSION=$(kubectl exec -n airflow "$SCHEDULER_POD" -c scheduler -- airflow version 2>/dev/null)
     echo -e "${GREEN}✓ Airflow is operational${NC}"
     echo "  Version: $AIRFLOW_VERSION"
     
     # List DAGs
-    DAG_COUNT=$(kubectl exec -n airflow $SCHEDULER_POD -- airflow dags list 2>/dev/null | grep -v "dag_id" | grep -v "^$" | wc -l)
+    DAG_COUNT=$(kubectl exec -n airflow "$SCHEDULER_POD" -c scheduler -- airflow dags list 2>/dev/null | grep -v "dag_id" | grep -v "^$" | wc -l)
     echo "  Total DAGs: $DAG_COUNT"
 else
     echo -e "${RED}✗ Airflow connection failed${NC}"
@@ -192,9 +210,11 @@ echo -e "${YELLOW}Airflow UI:${NC}"
 echo "  kubectl port-forward svc/airflow-api-server 8080:8080 -n airflow"
 echo "  → http://localhost:8080 (admin/admin)"
 echo ""
-echo -e "${YELLOW}RustFS Console:${NC}"
-echo "  kubectl port-forward svc/rustfs 9001:9001"
-echo "  → http://localhost:9001 (admin/minio_password)"
+echo -e "${YELLOW}SeaweedFS:${NC}"
+echo "  kubectl port-forward svc/seaweedfs-s3 9000:8333"
+echo "  → S3 API: http://localhost:9000 (admin/minio_password)"
+echo "  kubectl port-forward svc/seaweedfs-filer 9001:8888"
+echo "  → Filer UI: http://localhost:9001"
 echo ""
 echo -e "${YELLOW}PostgreSQL:${NC}"
 echo "  kubectl port-forward svc/postgres-postgresql 5432:5432"
@@ -216,6 +236,6 @@ echo "✅ Test Suite Complete!"
 echo "======================"
 echo ""
 echo "Next steps:"
-echo "1. Deploy your DAGs: kubectl cp dags/spark_orchestrator_dag.py airflow/$SCHEDULER_POD:/opt/airflow/dags/"
-echo "2. Submit Spark jobs: kubectl apply -f manifests/sedona_job.yaml"
+echo "1. Run the image pipeline: ./deploy-streaming.sh (Kubernetes) or ./run-pipeline.sh (local)"
+echo "2. Upload test images: cp <image> images/incoming/ or ./upload-images.sh"
 echo "3. Monitor with: kubectl get pods --all-namespaces -w"
