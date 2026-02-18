@@ -38,7 +38,7 @@ echo ""
 echo "Execute query from file:"
 echo "  mysql -h 127.0.0.1 -P 9030 -u root < queries/iceberg-examples.sql"
 echo ""
-echo "Web UI: http://localhost:8030 (admin/admin)"
+echo "Web UI: http://localhost:8030 (user: root, password: empty)"
 echo ""
 
 # Execute example query

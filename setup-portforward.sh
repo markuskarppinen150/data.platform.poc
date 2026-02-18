@@ -5,7 +5,7 @@ echo "🔧 Setting up port forwards..."
 
 # Kill any existing port-forwards
 pkill -f "port-forward.*kafka" 2>/dev/null || true
-pkill -f "port-forward.*rustfs" 2>/dev/null || true
+pkill -f "port-forward.*seaweedfs" 2>/dev/null || true
 pkill -f "port-forward.*postgres" 2>/dev/null || true
 
 # Port forward Kafka
@@ -13,9 +13,10 @@ echo "📬 Port forwarding Kafka..."
 kubectl port-forward svc/kafka 9092:9092 > /dev/null 2>&1 &
 sleep 2
 
-# Port forward RustFS
-echo "💾 Port forwarding RustFS..."
-kubectl port-forward svc/rustfs 9000:9000 9001:9001 > /dev/null 2>&1 &
+# Port forward SeaweedFS (S3 gateway + Filer UI)
+echo "💾 Port forwarding SeaweedFS..."
+kubectl port-forward svc/seaweedfs-s3 9000:8333 > /dev/null 2>&1 &
+kubectl port-forward svc/seaweedfs-filer 9001:8888 > /dev/null 2>&1 &
 sleep 2
 
 # Port forward PostgreSQL
@@ -43,8 +44,8 @@ echo "  POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
 echo ""
 echo "Services available at:"
 echo "  Kafka:      localhost:9092"
-echo "  RustFS API: localhost:9000"
-echo "  RustFS UI:  localhost:9001"
+echo "  SeaweedFS S3 API:   localhost:9000"
+echo "  SeaweedFS Filer UI: localhost:9001"
 echo "  PostgreSQL: localhost:5432"
 echo ""
 echo "To stop port forwards: pkill -f 'port-forward'"

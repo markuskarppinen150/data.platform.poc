@@ -7,7 +7,7 @@ data:
   KAFKA_BOOTSTRAP_SERVERS: "kafka.default.svc.cluster.local:9092"
   KAFKA_TOPIC: "image-uploads"
   KAFKA_GROUP_ID: "image-consumer-group"
-  MINIO_ENDPOINT: "rustfs.default.svc.cluster.local:9000"
+  MINIO_ENDPOINT: "seaweedfs-s3.default.svc.cluster.local:8333"
   MINIO_ACCESS_KEY: "admin"
   MINIO_BUCKET: "images"
   POSTGRES_HOST: "postgres-postgresql.default.svc.cluster.local"
@@ -110,8 +110,8 @@ spec:
         - name: MINIO_SECRET_KEY
           valueFrom:
             secretKeyRef:
-              name: rustfs
-              key: root-password
+              name: seaweedfs-s3
+              key: secret-key
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
