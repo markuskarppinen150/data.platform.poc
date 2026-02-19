@@ -7,6 +7,7 @@ echo "🔧 Setting up port forwards..."
 pkill -f "port-forward.*kafka" 2>/dev/null || true
 pkill -f "port-forward.*seaweedfs" 2>/dev/null || true
 pkill -f "port-forward.*postgres" 2>/dev/null || true
+pkill -f "port-forward.*flink" 2>/dev/null || true
 
 # Port forward Kafka
 echo "📬 Port forwarding Kafka..."
@@ -22,6 +23,11 @@ sleep 2
 # Port forward PostgreSQL
 echo "🗄️  Port forwarding PostgreSQL..."
 kubectl port-forward svc/postgres-postgresql 5432:5432 > /dev/null 2>&1 &
+sleep 2
+
+# Port forward Flink (JobManager UI)
+echo "🐿️  Port forwarding Flink JobManager UI..."
+kubectl port-forward -n flink svc/flink-jobmanager 8081:8081 > /dev/null 2>&1 &
 sleep 2
 
 # Get PostgreSQL password
@@ -47,5 +53,6 @@ echo "  Kafka:      localhost:9092"
 echo "  SeaweedFS S3 API:   localhost:9000"
 echo "  SeaweedFS Filer UI: localhost:9001"
 echo "  PostgreSQL: localhost:5432"
+echo "  Flink UI:   localhost:8081"
 echo ""
 echo "To stop port forwards: pkill -f 'port-forward'"

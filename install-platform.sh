@@ -53,8 +53,13 @@ fi
 
 echo "✅ Kernel parameters are properly configured"
 
-echo "🚀 Creating 3-node Kind cluster..."
-cat <<EOF | kind create cluster --name $CLUSTER_NAME --config=-
+echo "🚀 Creating Kind cluster (1 control-plane + 3 workers)..."
+
+# Pin the Kubernetes version used by kind via the node image.
+# This avoids Kind default changes across releases.
+KIND_NODE_IMAGE="kindest/node:v1.35.1"
+echo "🖼  Using Kind node image: $KIND_NODE_IMAGE"
+kind create cluster --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --config=- <<EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -249,7 +254,20 @@ kubectl wait --for=condition=ready pod -l component=scheduler --namespace airflo
 
 echo "✅ Airflow installed and DAGs configured successfully!"
 
-echo "✨ 5. Installing Spark Operator (for Sedona processing)..."
+echo "🐿️ 5. Installing Apache Flink (Stream Processing)..."
+echo "🧹 Cleaning up any previous Helm-based Flink install (if present)..."
+helm uninstall flink -n flink >/dev/null 2>&1 || true
+
+echo "📄 Applying Flink manifests (standalone cluster)..."
+kubectl apply -f manifests/deployments/flink.yaml
+
+echo "⏳ Waiting for Flink to be ready..."
+kubectl wait --for=condition=available deployment/flink-jobmanager -n flink --timeout=600s
+kubectl wait --for=condition=available deployment/flink-taskmanager -n flink --timeout=600s
+
+echo "✅ Apache Flink is ready!"
+
+echo "✨ 6. Installing Spark Operator (for Sedona processing)..."
 for i in {1..3}; do
   if helm install spark-operator spark-operator/spark-operator \
     --namespace spark-operator --create-namespace \
@@ -261,7 +279,7 @@ for i in {1..3}; do
   fi
 done
 
-echo "🧊 6. Installing Iceberg REST Catalog (Lakekeeper)..."
+echo "🧊 7. Installing Iceberg REST Catalog (Lakekeeper)..."
 # Create the lakekeeper-config secret with PostgreSQL connection URL
 kubectl create secret generic lakekeeper-config \
   --from-literal=database-url="postgresql://postgres:${POSTGRES_PASSWORD}@postgres-postgresql.default.svc.cluster.local:5432/iceberg_catalog"
@@ -273,7 +291,7 @@ kubectl wait --for=condition=ready pod -l app=iceberg-rest --timeout=300s
 
 echo "✅ Iceberg REST catalog is ready!"
 
-echo "🏔️ 7. Installing Apache Doris (SQL Query Engine)..."
+echo "🏔️ 8. Installing Apache Doris (SQL Query Engine)..."
 kubectl apply -f manifests/deployments/doris.yaml
 
 echo "⏳ Waiting for Apache Doris FE to be ready..."
