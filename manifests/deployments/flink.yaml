@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flink
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flink-jobmanager
+  namespace: flink
+  labels:
+    app.kubernetes.io/name: flink
+    app.kubernetes.io/instance: flink
+    app.kubernetes.io/component: jobmanager
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: flink
+    app.kubernetes.io/instance: flink
+    app.kubernetes.io/component: jobmanager
+  ports:
+    - name: rpc
+      port: 6123
+      targetPort: 6123
+    - name: web
+      port: 8081
+      targetPort: 8081
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-jobmanager
+  namespace: flink
+  labels:
+    app.kubernetes.io/name: flink
+    app.kubernetes.io/instance: flink
+    app.kubernetes.io/component: jobmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flink
+      app.kubernetes.io/instance: flink
+      app.kubernetes.io/component: jobmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flink
+        app.kubernetes.io/instance: flink
+        app.kubernetes.io/component: jobmanager
+    spec:
+      containers:
+        - name: jobmanager
+          image: flink:1.20.1-scala_2.12-java17
+          imagePullPolicy: IfNotPresent
+          args: ["jobmanager"]
+          ports:
+            - name: rpc
+              containerPort: 6123
+            - name: web
+              containerPort: 8081
+          env:
+            - name: FLINK_PROPERTIES
+              value: |
+                jobmanager.rpc.address: flink-jobmanager
+                rest.address: 0.0.0.0
+                rest.port: 8081
+          readinessProbe:
+            httpGet:
+              path: /
+              port: web
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /
+              port: web
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-taskmanager
+  namespace: flink
+  labels:
+    app.kubernetes.io/name: flink
+    app.kubernetes.io/instance: flink
+    app.kubernetes.io/component: taskmanager
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flink
+      app.kubernetes.io/instance: flink
+      app.kubernetes.io/component: taskmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flink
+        app.kubernetes.io/instance: flink
+        app.kubernetes.io/component: taskmanager
+    spec:
+      containers:
+        - name: taskmanager
+          image: flink:1.20.1-scala_2.12-java17
+          imagePullPolicy: IfNotPresent
+          args: ["taskmanager"]
+          ports:
+            - name: data
+              containerPort: 6121
+            - name: rpc
+              containerPort: 6122
+          env:
+            - name: FLINK_PROPERTIES
+              value: |
+                jobmanager.rpc.address: flink-jobmanager
+                taskmanager.numberOfTaskSlots: 2
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi

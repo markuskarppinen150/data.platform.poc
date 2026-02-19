@@ -44,6 +44,7 @@ echo "-------------------"
 check_pods "default" "app.kubernetes.io/name=postgresql" "PostgreSQL"
 check_pods "default" "app=seaweedfs" "SeaweedFS"
 check_pods "default" "app=kafka" "Kafka"
+check_pods "flink" "app.kubernetes.io/instance=flink" "Apache Flink"
 check_pods "airflow" "component=scheduler" "Airflow Scheduler"
 check_pods "airflow" "tier=airflow" "Airflow API Server"
 check_pods "spark-operator" "app.kubernetes.io/name=spark-operator" "Spark Operator"
@@ -109,9 +110,28 @@ else
     echo "  Hint: kubectl logs deploy/seaweedfs -c s3 --tail=100"
 fi
 
-# 5. Test Kafka
+# 5. Test Flink
 echo ""
-echo "5️⃣  Kafka Message Broker Test"
+echo "5️⃣  Flink Stream Processing Test"
+echo "----------------------------"
+FLINK_PROBE_POD="flink-probe-$(date +%s)"
+FLINK_HTTP_CODE=$(kubectl run -q --rm -i --restart=Never "$FLINK_PROBE_POD" --image=curlimages/curl:8.6.0 \
+    --command -- sh -c "curl -s -o /dev/null -w '%{http_code}\n' http://flink-jobmanager.flink.svc.cluster.local:8081/overview || echo 000" 2>/dev/null \
+    | tr -d '\r' \
+    | grep -E '^[0-9]{3}$' \
+    | tail -n 1)
+
+if [[ "$FLINK_HTTP_CODE" =~ ^(200)$ ]]; then
+    echo -e "${GREEN}✓ Flink JobManager REST API reachable (HTTP $FLINK_HTTP_CODE)${NC}"
+    echo "  Endpoint: http://flink-jobmanager.flink.svc.cluster.local:8081/overview"
+else
+    echo -e "${RED}✗ Flink JobManager REST API probe failed${NC}"
+    echo "  Hint: kubectl get pods -n flink && kubectl logs -n flink deploy/flink-jobmanager --tail=200"
+fi
+
+# 6. Test Kafka
+echo ""
+echo "6️⃣  Kafka Message Broker Test"
 echo "----------------------------"
 KAFKA_POD=$(kubectl get pod -l app=kafka -o jsonpath="{.items[0].metadata.name}")
 if kubectl exec $KAFKA_POD -- /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server localhost:9092 > /dev/null 2>&1; then
@@ -139,9 +159,9 @@ else
     echo -e "${RED}✗ Kafka connection failed${NC}"
 fi
 
-# 6. Test Airflow
+# 7. Test Airflow
 echo ""
-echo "6️⃣  Airflow Orchestrator Test"
+echo "7️⃣  Airflow Orchestrator Test"
 echo "----------------------------"
 SCHEDULER_POD=$(kubectl get pod -n airflow -l component=scheduler -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
 
@@ -167,9 +187,9 @@ else
     echo -e "${RED}✗ Airflow connection failed${NC}"
 fi
 
-# 7. Test Spark Operator
+# 8. Test Spark Operator
 echo ""
-echo "7️⃣  Spark Operator Test"
+echo "8️⃣  Spark Operator Test"
 echo "----------------------"
 if kubectl get crd sparkapplications.sparkoperator.k8s.io > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Spark Operator CRDs installed${NC}"
@@ -179,9 +199,9 @@ else
     echo -e "${RED}✗ Spark Operator CRDs not found${NC}"
 fi
 
-# 8. Test Lakekeeper
+# 9. Test Lakekeeper
 echo ""
-echo "8️⃣  Lakekeeper REST Catalog Test"
+echo "9️⃣  Lakekeeper REST Catalog Test"
 echo "-----------------------------------"
 LAKEKEEPER_POD=$(kubectl get pod -l app=iceberg-rest -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
 if [ ! -z "$LAKEKEEPER_POD" ]; then
@@ -200,7 +220,7 @@ else
     echo -e "${RED}✗ Lakekeeper pod not found${NC}"
 fi
 
-# 10. Service URLs
+# 11. Service URLs
 echo ""
 echo "🔗 Access Information"
 echo "--------------------"
@@ -219,6 +239,10 @@ echo ""
 echo -e "${YELLOW}PostgreSQL:${NC}"
 echo "  kubectl port-forward svc/postgres-postgresql 5432:5432"
 echo "  → localhost:5432 (postgres/<get-secret>)"
+echo ""
+echo -e "${YELLOW}Flink UI:${NC}"
+echo "  kubectl port-forward -n flink svc/flink-jobmanager 8081:8081"
+echo "  → http://localhost:8081"
 echo ""
 echo -e "${YELLOW}Apache Doris:${NC}"
 echo "  kubectl port-forward svc/doris-fe 9030:9030 8030:8030"

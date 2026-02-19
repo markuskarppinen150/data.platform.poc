@@ -1,6 +1,6 @@
 # Local Data Platform - Setup Guide
 
-A complete local data platform with PostgreSQL, SeaweedFS (S3), Kafka, Airflow, Spark Operator, Lakekeeper (Iceberg REST), and Apache Doris running on Kubernetes (Kind).
+A complete local data platform with PostgreSQL, SeaweedFS (S3), Kafka, Airflow, Flink, Spark Operator, Lakekeeper (Iceberg REST), and Apache Doris running on Kubernetes (Kind).
 
 This is strictly a sandbox for testing different kinds of setups and workflows with different data.
 
@@ -10,6 +10,7 @@ This platform includes:
 - **PostgreSQL + PostGIS** - Relational database with geospatial capabilities
 - **SeaweedFS** - S3-compatible object storage
 - **Kafka** - Message broker for streaming
+- **Apache Flink** - Stream processing engine
 - **Apache Iceberg** - Table format for data lakes
 - **Lakekeeper** - REST catalog for Iceberg
 - **Apache Doris** - MPP analytical database
@@ -38,7 +39,10 @@ This platform includes:
 2. **Kind** - Kubernetes in Docker
    ```bash
    # Install Kind
-   curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+   # For AMD64 / x86_64
+   [ $(uname -m) = x86_64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
+   # For ARM64
+   [ $(uname -m) = aarch64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-arm64
    chmod +x ./kind
    sudo mv ./kind /usr/local/bin/kind
    
@@ -86,11 +90,12 @@ cd ~/Documents/data-platform
 ```
 
 **What this does:**
-- Creates a Kind cluster (1 control-plane + 3 workers)
+- Creates a Kind cluster (1 control-plane + 3 workers) pinned to Kubernetes 1.35.1
 - Installs PostgreSQL with PostGIS (geospatial database)
 - Installs SeaweedFS (object storage)
 - Installs Kafka (message broker)
 - Installs Airflow via Helm (and loads DAGs from `dags/`)
+- Installs Apache Flink (standalone manifests)
 - Installs Spark Operator via Helm
 - Installs Lakekeeper (Iceberg REST catalog)
 - Installs Apache Doris (query engine)
@@ -119,6 +124,7 @@ cd ~/Documents/data-platform
 - ✓ Apache Doris query engine
 - ✓ SeaweedFS storage access
 - ✓ Kafka broker connectivity
+- ✓ Apache Flink is running
 - ✓ Airflow is operational
 - ✓ Spark Operator CRDs
 
@@ -154,10 +160,10 @@ source .venv/bin/activate
 # export POSTGRES_PASSWORD=$(kubectl get secret postgres-postgresql -o jsonpath="{.data.postgres-password}" | base64 -d)
 
 # Start consumer
-python manifests/streaming/image_consumer.py &
+python manifests/streaming/image-service/image_consumer.py &
 
 # Start producer
-python manifests/streaming/image_producer.py &
+python manifests/streaming/image-service/image_producer.py &
 
 # Terminal 3: Add test images
 cp ~/Pictures/test-image.jpg images/incoming/
@@ -221,6 +227,12 @@ FROM image_metadata
 LIMIT 5;
 ```
 
+#### Flink UI
+```bash
+kubectl port-forward -n flink svc/flink-jobmanager 8081:8081
+```
+- URL: http://localhost:8081
+
 **Example PostGIS queries:** See [queries/postgis-examples.sql](queries/postgis-examples.sql)
 
 #### Apache Doris Query Engine
@@ -264,7 +276,7 @@ kubectl port-forward svc/iceberg-rest 8181:8181
 
 ### Architecture
 
-- **Python Scripts**: Located in `manifests/streaming/`
+- **Python Scripts**: Located in `manifests/streaming/image-service/`
 - **ConfigMap Generation**: Scripts loaded dynamically via `deploy-streaming.sh`
 - **No Code Duplication**: Single source of truth for Python code
 - **Easy Updates**: Edit `.py` files, run `./deploy-streaming.sh` to redeploy
@@ -450,8 +462,8 @@ pkill -f image_consumer.py
 pkill -f image_producer.py
 
 # Kubernetes pipeline
-kubectl delete -f manifests/streaming/image-pipeline.yaml
-kubectl delete configmap image-pipeline-scripts
+kubectl delete -f manifests/streaming/image-service/image-service.yaml
+kubectl delete configmap image-service-scripts
 ```
 
 ### Delete Entire Platform
@@ -480,9 +492,10 @@ data-platform/
 │   │   ├── iceberg-rest-catalog.yaml  # Lakekeeper REST Catalog
 │   │   └── doris.yaml                 # Apache Doris (unified image)
 │   └── streaming/                  # Real-time event processing
-│       ├── image-pipeline.yaml    # Image processing pipeline
-│       ├── image_consumer.py      # Kafka consumer (images → S3 + DB)
-│       └── image_producer.py      # File watcher (folder → Kafka)
+│       └── image-service/         # Image pipeline (service-managed)
+│           ├── image-service.yaml     # Image processing pipeline
+│           ├── image_consumer.py      # Kafka consumer (images → S3 + DB)
+│           └── image_producer.py      # File watcher (folder → Kafka)
 ├── queries/                        # SQL queries
 │   ├── iceberg-examples.sql       # Iceberg/Doris examples
 │   └── postgis-examples.sql       # PostGIS geospatial queries
@@ -602,7 +615,7 @@ pkill -f port-forward
 - **Storage:** SeaweedFS uses ephemeral storage (data lost on restart). For persistence, update the manifest.
 - **Resources:** Requires ~8GB RAM and 4 CPU cores for smooth operation.
 - **Network:** All services communicate via Kubernetes internal DNS.
-- **Scaling:** Increase consumer replicas in `manifests/streaming/image-pipeline.yaml` for higher throughput.
+- **Scaling:** Increase consumer replicas in `manifests/streaming/image-service/image-service.yaml` for higher throughput.
 
 ---
 

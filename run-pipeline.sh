@@ -60,7 +60,7 @@ mkdir -p logs
 echo "📥 Starting Image Consumer..."
 export POSTGRES_PASSWORD
 source .venv/bin/activate
-.venv/bin/python manifests/streaming/image_consumer.py > logs/consumer.log 2>&1 &
+.venv/bin/python manifests/streaming/image-service/image_consumer.py > logs/consumer.log 2>&1 &
 CONSUMER_PID=$!
 echo "   Consumer PID: $CONSUMER_PID (logs: logs/consumer.log)"
 
@@ -69,7 +69,7 @@ sleep 3
 
 # Start Producer
 echo "📤 Starting Image Producer..."
-.venv/bin/python manifests/streaming/image_producer.py > logs/producer.log 2>&1 &
+.venv/bin/python manifests/streaming/image-service/image_producer.py > logs/producer.log 2>&1 &
 PRODUCER_PID=$!
 echo "   Producer PID: $PRODUCER_PID (logs: logs/producer.log)"
 
