@@ -99,6 +99,33 @@ POSTGRES_PASSWORD=$(kubectl get secret postgres-postgresql -o jsonpath="{.data.p
 
 # Create namespace + DAG ConfigMap up-front so the Helm release can mount it on first install
 kubectl create namespace airflow --dry-run=client -o yaml | kubectl apply -f -
+
+echo "🖼️  Creating shared image incoming PVC (airflow namespace)..."
+kubectl apply -n airflow -f - <<'EOF'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: image-incoming-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+EOF
+
+echo "🔐 Syncing platform secrets into airflow namespace (for image DAG + image-service)..."
+kubectl create secret generic seaweedfs-s3 \
+  -n airflow \
+  --from-literal=access-key=admin \
+  --from-literal=secret-key=minio_password \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create secret generic postgres-postgresql \
+  -n airflow \
+  --from-literal=postgres-password="${POSTGRES_PASSWORD}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 echo "📄 Creating/Updating Airflow DAG ConfigMap..."
 kubectl create configmap airflow-dags --from-file=dags/ -n airflow --dry-run=client -o yaml | kubectl apply -f -
 
@@ -116,6 +143,11 @@ data:
     host: postgres-postgresql.default.svc.cluster.local
     port: 5432
     db: postgres
+
+apiServer:
+  env:
+    - name: AIRFLOW_CONN_POSTGRES_DEFAULT
+      value: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres-postgresql.default.svc.cluster.local:5432/postgres"
 
 webserver:
   defaultUser:
@@ -137,6 +169,9 @@ webserver:
 
 scheduler:
   replicas: 1
+  env:
+    - name: AIRFLOW_CONN_POSTGRES_DEFAULT
+      value: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres-postgresql.default.svc.cluster.local:5432/postgres"
   resources:
     requests:
       cpu: 100m
@@ -165,9 +200,14 @@ scheduler:
         name: airflow-dags
     - name: dags
       emptyDir: {}
+    - name: incoming-images
+      persistentVolumeClaim:
+        claimName: image-incoming-pvc
   extraVolumeMounts:
     - name: dags
       mountPath: /opt/airflow/dags
+    - name: incoming-images
+      mountPath: /data/incoming
 
 dagProcessor:
   extraInitContainers:
@@ -218,7 +258,7 @@ extraPipPackages:
   - psycopg2-binary==2.9.9
   - apache-airflow-providers-postgres==5.13.0
   - kafka-python-ng==2.2.2
-  - minio==7.2.9
+  - boto3==1.35.99
   - Pillow==11.0.0
 AIRFLOW_CONFIG
 

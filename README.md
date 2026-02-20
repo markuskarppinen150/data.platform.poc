@@ -176,12 +176,38 @@ cp ~/Pictures/test-image.jpg images/incoming/
 ./deploy-streaming.sh
 
 # Upload test image
-PRODUCER_POD=$(kubectl get pod -l app=image-producer -o jsonpath='{.items[0].metadata.name}')
-kubectl cp ~/Pictures/test-image.jpg $PRODUCER_POD:/data/incoming/
+PRODUCER_POD=$(kubectl get pod -n airflow -l app=image-producer -o jsonpath='{.items[0].metadata.name}')
+kubectl cp -n airflow ~/Pictures/test-image.jpg $PRODUCER_POD:/data/incoming/
 
 # Monitor logs
-kubectl logs -l app=image-consumer -f
+kubectl logs -n airflow -l app=image-consumer -f
 ```
+
+---
+
+## 🧠 Quix Streams Processor Service (Kafka → Kafka)
+
+This repo also includes a simple Quix Streams-based processor that runs as a Kubernetes pod and reads from one Kafka topic and writes to another.
+
+**What it does (default):**
+- Consumes JSON messages from `image-uploads`
+- Emits a smaller "processed" JSON payload to `image-uploads-processed`
+
+### Deploy to Kind
+
+```bash
+./deploy-quix-streams-service.sh
+```
+
+### Watch logs
+
+```bash
+kubectl logs -n airflow -l app=quix-streams-service -f
+```
+
+### Customize topics / group
+
+Edit the ConfigMap in [manifests/streaming/quix-streams-service/quix-streams-service.yaml](manifests/streaming/quix-streams-service/quix-streams-service.yaml).
 
 ---
 
@@ -358,8 +384,8 @@ kubectl logs -l app=seaweedfs
 kubectl logs -n airflow -l component=scheduler
 
 # Image Pipeline
-kubectl logs -l app=image-consumer -f
-kubectl logs -l app=image-producer -f
+kubectl logs -n airflow -l app=image-consumer -f
+kubectl logs -n airflow -l app=image-producer -f
 ```
 
 ### Test Kafka Connection
@@ -410,14 +436,14 @@ kubectl get svc seaweedfs-filer
 #### Image Pipeline Errors
 ```bash
 # Check consumer logs
-kubectl logs -l app=image-consumer --tail=50
+kubectl logs -n airflow -l app=image-consumer --tail=50
 
 # Check producer logs
-kubectl logs -l app=image-producer --tail=50
+kubectl logs -n airflow -l app=image-producer --tail=50
 
 # Restart deployments
-kubectl rollout restart deployment/image-consumer
-kubectl rollout restart deployment/image-producer
+kubectl rollout restart -n airflow deployment/image-consumer
+kubectl rollout restart -n airflow deployment/image-producer
 ```
 
 ---

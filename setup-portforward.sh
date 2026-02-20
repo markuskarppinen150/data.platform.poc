@@ -6,6 +6,7 @@ echo "🔧 Setting up port forwards..."
 # Kill any existing port-forwards
 pkill -f "port-forward.*kafka" 2>/dev/null || true
 pkill -f "port-forward.*seaweedfs" 2>/dev/null || true
+pkill -f "port-forward.*airflow" 2>/dev/null || true
 pkill -f "port-forward.*postgres" 2>/dev/null || true
 pkill -f "port-forward.*flink" 2>/dev/null || true
 
@@ -14,10 +15,18 @@ echo "📬 Port forwarding Kafka..."
 kubectl port-forward svc/kafka 9092:9092 > /dev/null 2>&1 &
 sleep 2
 
-# Port forward SeaweedFS (S3 gateway + Filer UI)
+# Port forward SeaweedFS (S3 gateway + Filer UI + Master)
 echo "💾 Port forwarding SeaweedFS..."
 kubectl port-forward svc/seaweedfs-s3 9000:8333 > /dev/null 2>&1 &
 kubectl port-forward svc/seaweedfs-filer 9001:8888 > /dev/null 2>&1 &
+kubectl port-forward svc/seaweedfs-master 9333:9333 > /dev/null 2>&1 &
+# SeaweedFS volume server runs on port 8080 inside the pod; map it to 8082 locally to avoid clashing with Airflow (8080)
+kubectl port-forward deploy/seaweedfs 8082:8080 > /dev/null 2>&1 &
+sleep 2
+
+# Port forward Airflow (API Server / UI)
+echo "🌬️  Port forwarding Airflow UI..."
+kubectl port-forward -n airflow svc/airflow-api-server 8080:8080 > /dev/null 2>&1 &
 sleep 2
 
 # Port forward PostgreSQL
@@ -52,6 +61,9 @@ echo "Services available at:"
 echo "  Kafka:      localhost:9092"
 echo "  SeaweedFS S3 API:   localhost:9000"
 echo "  SeaweedFS Filer UI: localhost:9001"
+echo "  SeaweedFS Master:   localhost:9333"
+echo "  SeaweedFS Volume:   localhost:8082"
+echo "  Airflow UI:  localhost:8080"
 echo "  PostgreSQL: localhost:5432"
 echo "  Flink UI:   localhost:8081"
 echo ""

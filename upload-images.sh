@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Upload images to the image-producer pod
 
-NAMESPACE="${NAMESPACE:-default}"
+NAMESPACE="${NAMESPACE:-airflow}"
 LABEL_SELECTOR="${LABEL_SELECTOR:-app=image-producer}"
 DEST_DIR="${DEST_DIR:-/data/incoming}"
 CONTAINER="${CONTAINER:-}"

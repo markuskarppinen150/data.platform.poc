@@ -6,3 +6,6 @@ Pillow==11.0.0
 
 # Optional - for local testing
 python-dotenv==1.0.1
+
+# Optional - Quix Streams processor service
+quixstreams==3.23.3
