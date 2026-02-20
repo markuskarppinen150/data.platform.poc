@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quix-streams-service-config
+  namespace: airflow
+data:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.default.svc.cluster.local:9092"
+  KAFKA_INPUT_TOPIC: "image-uploads"
+  KAFKA_OUTPUT_TOPIC: "image-uploads-processed"
+  KAFKA_CONSUMER_GROUP: "quix-image-processor"
+  LOG_LEVEL: "INFO"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quix-streams-service
+  namespace: airflow
+  labels:
+    app: quix-streams-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quix-streams-service
+  template:
+    metadata:
+      labels:
+        app: quix-streams-service
+    spec:
+      containers:
+        - name: quix-streams-service
+          image: quix-streams-service:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: quix-streams-service-config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

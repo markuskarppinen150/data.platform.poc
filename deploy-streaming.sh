@@ -9,7 +9,7 @@ echo "📦 Creating ConfigMap from Python scripts..."
 kubectl create configmap image-service-scripts \
   --from-file=image_producer.py=manifests/streaming/image-service/image_producer.py \
   --from-file=image_consumer.py=manifests/streaming/image-service/image_consumer.py \
-  --namespace=default \
+  --namespace=airflow \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "✓ ConfigMap created"
@@ -23,8 +23,8 @@ echo ""
 echo "✅ Image Streaming Pipeline deployed successfully!"
 echo ""
 echo "To check status:"
-echo "  kubectl get pods -l 'app in (image-producer,image-consumer)'"
+echo "  kubectl get pods -n airflow -l 'app in (image-producer,image-consumer)'"
 echo ""
 echo "To view logs:"
-echo "  kubectl logs -f deployment/image-producer"
-echo "  kubectl logs -f deployment/image-consumer"
+echo "  kubectl logs -n airflow -f deployment/image-producer"
+echo "  kubectl logs -n airflow -f deployment/image-consumer"

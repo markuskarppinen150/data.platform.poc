@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: image-service-config
-  namespace: default
+  namespace: airflow
 data:
   KAFKA_BOOTSTRAP_SERVERS: "kafka.default.svc.cluster.local:9092"
   KAFKA_TOPIC: "image-uploads"
@@ -20,7 +20,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: image-incoming-pvc
-  namespace: default
+  namespace: airflow
 spec:
   accessModes:
     - ReadWriteOnce
@@ -32,7 +32,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: image-producer
-  namespace: default
+  namespace: airflow
   labels:
     app: image-producer
 spec:
@@ -81,7 +81,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: image-consumer
-  namespace: default
+  namespace: airflow
   labels:
     app: image-consumer
 spec:
@@ -136,7 +136,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: image-producer
-  namespace: default
+  namespace: airflow
 spec:
   selector:
     app: image-producer
@@ -149,7 +149,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: image-consumer
-  namespace: default
+  namespace: airflow
 spec:
   selector:
     app: image-consumer
