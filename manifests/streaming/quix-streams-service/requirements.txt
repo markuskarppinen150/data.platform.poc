@@ -1,1 +1,10 @@
 quixstreams==3.23.3
+
+# PostgreSQL sink
+psycopg2-binary==2.9.11
+
+# Iceberg sink (Lakekeeper REST catalog) + Arrow writes
+pyiceberg[pyarrow]==0.11.0
+pyarrow==23.0.1
+s3fs
+boto3

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from quixstreams import Application
 
+from app.sinks import IcebergProcessedSink, PostgresConfig, PostgresProcessedSink
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -39,16 +40,25 @@ def main() -> None:
     input_topic_name = os.getenv("KAFKA_INPUT_TOPIC", "image-uploads")
     output_topic_name = os.getenv("KAFKA_OUTPUT_TOPIC", "image-uploads-processed")
     consumer_group = os.getenv("KAFKA_CONSUMER_GROUP", "quix-image-processor")
+    auto_offset_reset = os.getenv("KAFKA_AUTO_OFFSET_RESET", "latest")
+    commit_interval = float(os.getenv("QUIX_COMMIT_INTERVAL", "5.0"))
+    processing_guarantee = os.getenv("QUIX_PROCESSING_GUARANTEE", "at-least-once")
 
     logger.info("Starting Quix Streams service")
     logger.info("Kafka broker: %s", broker)
     logger.info("Input topic: %s", input_topic_name)
     logger.info("Output topic: %s", output_topic_name)
     logger.info("Consumer group: %s", consumer_group)
+    logger.info("Auto offset reset: %s", auto_offset_reset)
+    logger.info("Commit interval: %ss", commit_interval)
+    logger.info("Processing guarantee: %s", processing_guarantee)
 
     app = Application(
         broker_address=broker,
         consumer_group=consumer_group,
+        auto_offset_reset=auto_offset_reset,
+        commit_interval=commit_interval,
+        processing_guarantee=processing_guarantee,  # external sinks are still at-least-once
     )
 
     input_topic = app.topic(input_topic_name, value_deserializer="json")
@@ -56,7 +66,27 @@ def main() -> None:
 
     sdf = app.dataframe(topic=input_topic)
     sdf = sdf.apply(_transform)
-    sdf = sdf.to_topic(output_topic)
+
+    # 1) Continue emitting processed events to Kafka
+    sdf.to_topic(output_topic)
+
+    # 2) Sink to PostgreSQL
+    if os.getenv("ENABLE_POSTGRES_SINK", "true").lower() == "true":
+        pg_cfg = PostgresConfig.from_env()
+        pg_table = os.getenv("POSTGRES_TABLE", "image_uploads_processed")
+        sdf.sink(PostgresProcessedSink(pg=pg_cfg, table_name=pg_table))
+        logger.info("PostgreSQL sink enabled (table=%s)", pg_table)
+    else:
+        logger.info("PostgreSQL sink disabled")
+
+    # 3) Sink to Iceberg via Lakekeeper REST catalog
+    if os.getenv("ENABLE_ICEBERG_SINK", "true").lower() == "true":
+        ns = os.getenv("ICEBERG_NAMESPACE", "default")
+        tbl = os.getenv("ICEBERG_TABLE", "image_uploads_processed")
+        sdf.sink(IcebergProcessedSink(namespace=ns, table=tbl))
+        logger.info("Iceberg sink enabled (table=%s.%s)", ns, tbl)
+    else:
+        logger.info("Iceberg sink disabled")
 
     # Run the application (it automatically tracks the dataframe pipeline)
     app.run()
