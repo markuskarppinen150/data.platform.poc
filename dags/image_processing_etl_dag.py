@@ -51,12 +51,10 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka.default.sv
 KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'image-uploads')
 KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'airflow-manual-image-consumer')
 
-MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'seaweedfs-s3.default.svc.cluster.local:8333')
-MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'admin')
-MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'minio_password')
-MINIO_BUCKET = os.getenv('MINIO_BUCKET', 'images')
-
-S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL')
+S3_ENDPOINT = os.getenv('S3_ENDPOINT', 'http://seaweedfs-s3.default.svc.cluster.local:8333')
+S3_ACCESS_KEY_ID = os.getenv('S3_ACCESS_KEY_ID', 'admin')
+S3_SECRET_ACCESS_KEY = os.getenv('S3_SECRET_ACCESS_KEY', 'seaweedfs_password')
+S3_BUCKET = os.getenv('S3_BUCKET', 'images')
 S3_REGION = os.getenv('S3_REGION', 'us-east-1')
 
 POSTGRES_CONN_ID = os.getenv('POSTGRES_CONN_ID', 'postgres_default')
@@ -178,17 +176,15 @@ def consume_and_store_images(**context: Any) -> int:
         consumer_timeout_ms=8000,
     )
 
-    endpoint_url = S3_ENDPOINT_URL
-    if not endpoint_url:
-        endpoint_url = MINIO_ENDPOINT
-        if not endpoint_url.startswith('http://') and not endpoint_url.startswith('https://'):
-            endpoint_url = f"http://{endpoint_url}"
+    endpoint_url = S3_ENDPOINT
+    if endpoint_url and not endpoint_url.startswith('http://') and not endpoint_url.startswith('https://'):
+        endpoint_url = f"http://{endpoint_url}"
 
     s3 = boto3.client(
         's3',
         endpoint_url=endpoint_url,
-        aws_access_key_id=MINIO_ACCESS_KEY,
-        aws_secret_access_key=MINIO_SECRET_KEY,
+        aws_access_key_id=S3_ACCESS_KEY_ID,
+        aws_secret_access_key=S3_SECRET_ACCESS_KEY,
         region_name=S3_REGION,
         config=Config(
             signature_version='s3v4',
@@ -201,10 +197,10 @@ def consume_and_store_images(**context: Any) -> int:
 
     # Ensure bucket exists
     try:
-        s3.head_bucket(Bucket=MINIO_BUCKET)
+        s3.head_bucket(Bucket=S3_BUCKET)
     except ClientError:
         # SeaweedFS typically accepts CreateBucket without LocationConstraint.
-        s3.create_bucket(Bucket=MINIO_BUCKET)
+        s3.create_bucket(Bucket=S3_BUCKET)
 
     pg_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
 
@@ -221,7 +217,7 @@ def consume_and_store_images(**context: Any) -> int:
             object_name = f"images/{today}/{filename}"
 
             s3.put_object(
-                Bucket=MINIO_BUCKET,
+                Bucket=S3_BUCKET,
                 Key=object_name,
                 Body=image_data,
                 ContentType=mime_type,
@@ -252,7 +248,7 @@ def consume_and_store_images(**context: Any) -> int:
             )
 
             processed_count += 1
-            print(f"✓ Stored {filename} -> s3://{MINIO_BUCKET}/{object_name}")
+            print(f"✓ Stored {filename} -> s3://{S3_BUCKET}/{object_name}")
         except Exception as e:
             print(f"✗ Error processing message: {e}")
 

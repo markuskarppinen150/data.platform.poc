@@ -95,11 +95,19 @@ echo ""
 echo "4️⃣  SeaweedFS Object Storage Test"
 echo "----------------------------"
 S3_PROBE_POD="seaweedfs-s3-probe-$(date +%s)"
-HTTP_CODE=$(kubectl run -q --rm -i --restart=Never "$S3_PROBE_POD" --image=curlimages/curl:8.6.0 \
-    --command -- sh -c "curl -s -o /dev/null -w '%{http_code}\n' http://seaweedfs-s3.default.svc.cluster.local:8333/ || echo 000" 2>/dev/null \
-    | tr -d '\r' \
-    | grep -E '^[0-9]{3}$' \
-    | tail -n 1)
+HTTP_CODE=""
+for i in {1..5}; do
+    HTTP_CODE=$(kubectl run -q --rm -i --restart=Never "$S3_PROBE_POD-$i" --image=curlimages/curl:8.6.0 \
+        --command -- sh -c "curl -s -o /dev/null -w '%{http_code}\\n' http://seaweedfs-s3.default.svc.cluster.local:8333/ || echo 000" 2>/dev/null \
+        | tr -d '\r' \
+        | grep -E '^[0-9]{3}$' \
+        | tail -n 1)
+
+    if [[ "$HTTP_CODE" =~ ^(200|403|404)$ ]]; then
+        break
+    fi
+    sleep 2
+done
 
 if [[ "$HTTP_CODE" =~ ^(200|403|404)$ ]]; then
     echo -e "${GREEN}✓ SeaweedFS S3 gateway reachable (HTTP $HTTP_CODE)${NC}"
@@ -107,7 +115,9 @@ if [[ "$HTTP_CODE" =~ ^(200|403|404)$ ]]; then
     echo "  Filer UI: Use 'kubectl port-forward svc/seaweedfs-filer 9001:8888'"
 else
     echo -e "${RED}✗ SeaweedFS S3 gateway probe failed${NC}"
-    echo "  Hint: kubectl logs deploy/seaweedfs -c s3 --tail=100"
+    echo "  Endpoints: $(kubectl get endpoints seaweedfs-s3 -n default -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || echo 'none')"
+    echo "  Hint: kubectl get pods -l app=seaweedfs -o wide"
+    echo "  Hint: kubectl logs deploy/seaweedfs -c s3 --tail=100 (or: kubectl logs -l app=seaweedfs -c s3 --tail=100)"
 fi
 
 # 5. Test Flink
@@ -232,7 +242,7 @@ echo "  → http://localhost:8080 (admin/admin)"
 echo ""
 echo -e "${YELLOW}SeaweedFS:${NC}"
 echo "  kubectl port-forward svc/seaweedfs-s3 9000:8333"
-echo "  → S3 API: http://localhost:9000 (admin/minio_password)"
+echo "  → S3 API: http://localhost:9000 (admin/seaweedfs_password)"
 echo "  kubectl port-forward svc/seaweedfs-filer 9001:8888"
 echo "  → Filer UI: http://localhost:9001"
 echo ""

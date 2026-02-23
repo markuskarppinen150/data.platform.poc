@@ -193,6 +193,10 @@ This repo also includes a simple Quix Streams-based processor that runs as a Kub
 - Consumes JSON messages from `image-uploads`
 - Emits a smaller "processed" JSON payload to `image-uploads-processed`
 
+**Optional sinks (enabled by default):**
+- **PostgreSQL**: inserts into `public.image_uploads_processed` (idempotent on `file_hash`)
+- **Iceberg (Lakekeeper REST catalog)**: appends to `default.image_uploads_processed` in warehouse `s3://iceberg/warehouse`
+
 ### Deploy to Kind
 
 ```bash
@@ -208,6 +212,10 @@ kubectl logs -n airflow -l app=quix-streams-service -f
 ### Customize topics / group
 
 Edit the ConfigMap in [manifests/streaming/quix-streams-service/quix-streams-service.yaml](manifests/streaming/quix-streams-service/quix-streams-service.yaml).
+
+To disable sinks, set:
+- `ENABLE_POSTGRES_SINK=false`
+- `ENABLE_ICEBERG_SINK=false`
 
 ---
 
@@ -226,7 +234,7 @@ kubectl port-forward svc/airflow-api-server 8080:8080 -n airflow
 kubectl port-forward svc/seaweedfs-s3 9000:8333
 kubectl port-forward svc/seaweedfs-filer 9001:8888
 ```
-- S3 API: http://localhost:9000 (admin/minio_password)
+- S3 API: http://localhost:9000 (admin/seaweedfs_password)
 - Filer UI: http://localhost:9001
 
 #### PostgreSQL Database
@@ -325,14 +333,13 @@ tail -f logs/producer.log
 
 **Check S3 Storage:**
 ```bash
-# SeaweedFS exposes an S3 gateway (no MinIO-style console).
-# You can browse the Filer UI and/or use an S3 client.
+# SeaweedFS exposes an S3 gateway (no built-in S3 web console).
+# You can browse the Filer UI and/or use an S3 client (e.g., AWS CLI).
 kubectl port-forward svc/seaweedfs-s3 9000:8333 &
 kubectl port-forward svc/seaweedfs-filer 9001:8888 &
 
-# List via MinIO client (mc):
-mc alias set local http://localhost:9000 admin minio_password
-mc ls -r local/images
+# List objects via AWS CLI:
+aws --endpoint-url http://localhost:9000 s3 ls s3://images --recursive
 ```
 
 **Check Database:**
@@ -342,19 +349,11 @@ kubectl exec postgres-postgresql-0 -- \
   psql -U postgres -c "SELECT filename, file_size, s3_path, uploaded_at FROM image_metadata ORDER BY uploaded_at DESC LIMIT 10;"
 ```
 
-**Using S3 client (mc):**
+**Using AWS CLI:**
 ```bash
-# Install mc
-wget https://dl.min.io/client/mc/release/linux-amd64/mc
-chmod +x mc
-sudo mv mc /usr/local/bin/
-
-# Configure
+# List objects
 kubectl port-forward svc/seaweedfs-s3 9000:8333 &
-mc alias set local http://localhost:9000 admin minio_password
-
-# List files
-mc ls -r local/images/
+aws --endpoint-url http://localhost:9000 s3 ls s3://images --recursive
 ```
 
 ---
@@ -557,10 +556,11 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 KAFKA_TOPIC=image-uploads
 
 # S3 (SeaweedFS)
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=admin
-MINIO_SECRET_KEY=minio_password
-MINIO_BUCKET=images
+S3_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY_ID=admin
+S3_SECRET_ACCESS_KEY=seaweedfs_password
+S3_BUCKET=images
+S3_REGION=us-east-1
 
 # PostgreSQL
 POSTGRES_HOST=localhost

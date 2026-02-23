@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Image Consumer - Reads images from Kafka, uploads to MinIO, and stores metadata in PostgreSQL
+Image Consumer - Reads images from Kafka, uploads to S3-compatible storage (SeaweedFS), and stores metadata in PostgreSQL
 """
 import os
 import json
@@ -8,8 +8,9 @@ import base64
 from datetime import datetime
 from io import BytesIO
 from kafka import KafkaConsumer
-from minio import Minio
-from minio.error import S3Error
+import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError
 import psycopg2
 from psycopg2.extras import execute_values
 import logging
@@ -22,11 +23,11 @@ logger = logging.getLogger(__name__)
 
 
 class ImageConsumer:
-    """Consumes images from Kafka and stores them in MinIO and PostgreSQL"""
+    """Consumes images from Kafka and stores them in S3-compatible storage and PostgreSQL"""
     
     def __init__(self, kafka_servers, kafka_topic, kafka_group_id,
-                 minio_endpoint, minio_access_key, minio_secret_key,
-                 minio_bucket, postgres_config):
+                 s3_endpoint, s3_access_key_id, s3_secret_access_key,
+                 s3_bucket, postgres_config, s3_region="us-east-1"):
         
         # Initialize Kafka Consumer
         self.consumer = KafkaConsumer(
@@ -40,15 +41,22 @@ class ImageConsumer:
             value_deserializer=lambda m: json.loads(m.decode('utf-8'))
         )
         
-        # Initialize MinIO Client
-        self.minio_client = Minio(
-            minio_endpoint,
-            access_key=minio_access_key,
-            secret_key=minio_secret_key,
-            secure=False
+        # Initialize S3 client (SeaweedFS S3 gateway)
+        endpoint_url = s3_endpoint
+        if endpoint_url and not endpoint_url.startswith("http"):
+            endpoint_url = f"http://{endpoint_url}"
+
+        os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
+        self.s3_client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=s3_access_key_id,
+            aws_secret_access_key=s3_secret_access_key,
+            region_name=s3_region,
+            config=Config(s3={"addressing_style": "path"}),
         )
         
-        self.bucket_name = minio_bucket
+        self.bucket_name = s3_bucket
         self._ensure_bucket_exists()
         
         # Initialize PostgreSQL Connection
@@ -58,14 +66,16 @@ class ImageConsumer:
         logger.info("Image Consumer initialized successfully")
     
     def _ensure_bucket_exists(self):
-        """Create MinIO bucket if it doesn't exist"""
+        """Create bucket if it doesn't exist"""
         try:
-            if not self.minio_client.bucket_exists(self.bucket_name):
-                self.minio_client.make_bucket(self.bucket_name)
-                logger.info(f"Created MinIO bucket: {self.bucket_name}")
-            else:
-                logger.info(f"MinIO bucket exists: {self.bucket_name}")
-        except S3Error as e:
+            self.s3_client.head_bucket(Bucket=self.bucket_name)
+            logger.info(f"Bucket exists: {self.bucket_name}")
+        except ClientError as e:
+            error_code = (e.response or {}).get("Error", {}).get("Code")
+            if error_code in {"404", "NoSuchBucket", "NotFound"}:
+                self.s3_client.create_bucket(Bucket=self.bucket_name)
+                logger.info(f"Created bucket: {self.bucket_name}")
+                return
             logger.error(f"Error checking/creating bucket: {e}")
             raise
     
@@ -108,28 +118,25 @@ class ImageConsumer:
             logger.error(f"Error initializing database: {e}")
             raise
     
-    def _upload_to_minio(self, image_data: bytes, filename: str, 
-                        mime_type: str) -> str:
-        """Upload image to MinIO and return the S3 path"""
+    def _upload_to_s3(self, image_data: bytes, filename: str, mime_type: str) -> str:
+        """Upload image to S3-compatible storage and return the object key"""
         # Generate S3 path with date partitioning
         today = datetime.now().strftime('%Y/%m/%d')
         s3_path = f"images/{today}/{filename}"
         
         try:
-            # Upload to MinIO
-            self.minio_client.put_object(
-                self.bucket_name,
-                s3_path,
-                BytesIO(image_data),
-                length=len(image_data),
-                content_type=mime_type
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_path,
+                Body=BytesIO(image_data),
+                ContentType=mime_type,
             )
             
-            logger.info(f"✓ Uploaded to MinIO: s3://{self.bucket_name}/{s3_path}")
+            logger.info(f"✓ Uploaded to S3: s3://{self.bucket_name}/{s3_path}")
             return s3_path
             
-        except S3Error as e:
-            logger.error(f"Error uploading to MinIO: {e}")
+        except ClientError as e:
+            logger.error(f"Error uploading to S3: {e}")
             raise
     
     def _store_metadata(self, message: dict, s3_path: str, 
@@ -178,8 +185,8 @@ class ImageConsumer:
             # Decode base64 image data
             image_data = base64.b64decode(message_value['image_data'])
             
-            # Upload to MinIO
-            s3_path = self._upload_to_minio(
+            # Upload to S3
+            s3_path = self._upload_to_s3(
                 image_data,
                 filename,
                 message_value['mime_type']
@@ -219,10 +226,11 @@ def main():
     KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'image-uploads')
     KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'image-consumer-group')
     
-    MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'localhost:9000')
-    MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'admin')
-    MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'minio_password')
-    MINIO_BUCKET = os.getenv('MINIO_BUCKET', 'images')
+    S3_ENDPOINT = os.getenv('S3_ENDPOINT', 'http://localhost:9000')
+    S3_ACCESS_KEY_ID = os.getenv('S3_ACCESS_KEY_ID', 'admin')
+    S3_SECRET_ACCESS_KEY = os.getenv('S3_SECRET_ACCESS_KEY', 'seaweedfs_password')
+    S3_BUCKET = os.getenv('S3_BUCKET', 'images')
+    S3_REGION = os.getenv('S3_REGION', 'us-east-1')
     
     POSTGRES_CONFIG = {
         'host': os.getenv('POSTGRES_HOST', 'localhost'),
@@ -235,8 +243,8 @@ def main():
     logger.info("Configuration:")
     logger.info(f"  Kafka: {KAFKA_BOOTSTRAP_SERVERS}")
     logger.info(f"  Topic: {KAFKA_TOPIC}")
-    logger.info(f"  MinIO: {MINIO_ENDPOINT}")
-    logger.info(f"  Bucket: {MINIO_BUCKET}")
+    logger.info(f"  S3 Endpoint: {S3_ENDPOINT}")
+    logger.info(f"  Bucket: {S3_BUCKET}")
     logger.info(f"  PostgreSQL: {POSTGRES_CONFIG['host']}:{POSTGRES_CONFIG['port']}")
     
     # Create and start consumer
@@ -244,11 +252,12 @@ def main():
         kafka_servers=KAFKA_BOOTSTRAP_SERVERS,
         kafka_topic=KAFKA_TOPIC,
         kafka_group_id=KAFKA_GROUP_ID,
-        minio_endpoint=MINIO_ENDPOINT,
-        minio_access_key=MINIO_ACCESS_KEY,
-        minio_secret_key=MINIO_SECRET_KEY,
-        minio_bucket=MINIO_BUCKET,
-        postgres_config=POSTGRES_CONFIG
+        s3_endpoint=S3_ENDPOINT,
+        s3_access_key_id=S3_ACCESS_KEY_ID,
+        s3_secret_access_key=S3_SECRET_ACCESS_KEY,
+        s3_bucket=S3_BUCKET,
+        s3_region=S3_REGION,
+        postgres_config=POSTGRES_CONFIG,
     )
     
     consumer.start()

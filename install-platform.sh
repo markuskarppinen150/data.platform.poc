@@ -118,7 +118,7 @@ echo "🔐 Syncing platform secrets into airflow namespace (for image DAG + imag
 kubectl create secret generic seaweedfs-s3 \
   -n airflow \
   --from-literal=access-key=admin \
-  --from-literal=secret-key=minio_password \
+  --from-literal=secret-key=seaweedfs_password \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create secret generic postgres-postgresql \
@@ -330,6 +330,53 @@ echo "⏳ Waiting for Iceberg REST catalog to be ready..."
 kubectl wait --for=condition=ready pod -l app=iceberg-rest --timeout=300s
 
 echo "✅ Iceberg REST catalog is ready!"
+
+echo "🔧 Bootstrapping Lakekeeper (idempotent)..."
+# If authentication is disabled (default in this repo), no token is required.
+# Bootstrapping can only happen once; subsequent calls will fail and are ignored.
+kubectl -n default run lakekeeper-bootstrap --rm -i --restart=Never \
+  --image=curlimages/curl:8.6.0 --command -- \
+  sh -lc 'curl -sS -X POST -H "content-type: application/json" \
+    -d "{\"accept-terms-of-use\":true}" \
+    http://iceberg-rest:8181/management/v1/bootstrap >/dev/null || true'
+
+echo "🪣 Ensuring SeaweedFS bucket for Iceberg exists..."
+kubectl -n default run seaweedfs-s3-bucket --rm -i --restart=Never \
+  --image=amazon/aws-cli:2.15.29 --command -- \
+  sh -lc 'set -eu; export AWS_ACCESS_KEY_ID=admin AWS_SECRET_ACCESS_KEY=seaweedfs_password AWS_DEFAULT_REGION=us-east-1; \
+    aws --endpoint-url http://seaweedfs-s3:8333 s3 mb s3://iceberg >/dev/null 2>&1 || true'
+
+echo "🏭 Ensuring Lakekeeper warehouse 'seaweedfs' exists..."
+# The Quix Streams service expects:
+# - ICEBERG_WAREHOUSE=seaweedfs (warehouse name)
+# - ICEBERG_WAREHOUSE_LOCATION=s3://iceberg/warehouse (table base location)
+kubectl -n default run lakekeeper-warehouse --rm -i --restart=Never \
+  --image=curlimages/curl:8.6.0 --command -- \
+  sh -lc 'set -eu; payload=$(cat <<"JSON"
+{
+  "warehouse-name": "seaweedfs",
+  "delete-profile": {"type": "hard"},
+  "storage-credential": {
+    "type": "s3",
+    "credential-type": "access-key",
+    "aws-access-key-id": "admin",
+    "aws-secret-access-key": "seaweedfs_password"
+  },
+  "storage-profile": {
+    "type": "s3",
+    "bucket": "iceberg",
+    "region": "local-01",
+    "sts-enabled": false,
+    "flavor": "s3-compat",
+    "key-prefix": "warehouse",
+    "endpoint": "http://seaweedfs-s3.default.svc.cluster.local:8333",
+    "path-style-access": true
+  }
+}
+JSON
+); \
+    curl -sS -X POST -H "content-type: application/json" \
+      -d "$payload" http://iceberg-rest:8181/management/v1/warehouse >/dev/null || true'
 
 echo "🏔️ 8. Installing Apache Doris (SQL Query Engine)..."
 kubectl apply -f manifests/deployments/doris.yaml
