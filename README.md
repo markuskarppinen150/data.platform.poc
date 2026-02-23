@@ -50,6 +50,8 @@ This platform includes:
    kind version
    ```
 
+   Note (Linux): this repo pins Kubernetes 1.35.x for kind, which expects a cgroup v2 host.
+
 3. **kubectl** - Kubernetes CLI
    ```bash
    # Install kubectl
@@ -88,6 +90,8 @@ cd ~/Documents/data-platform
 # Run the installation script
 ./install-platform.sh
 ```
+
+Note: `./install-platform.sh` validates a few Linux kernel `sysctl` settings (inotify + `vm.max_map_count`) needed for Apache Doris. If they’re not set, it exits and prints the exact commands to apply.
 
 **What this does:**
 - Creates a Kind cluster (1 control-plane + 3 workers) pinned to Kubernetes 1.35.1
@@ -153,6 +157,10 @@ pip install -r requirements.txt
 # Terminal 1: Setup port forwards and services
 ./setup-portforward.sh
 
+# (Alternative) One-shot helper that does port-forwards + starts producer/consumer
+# and writes logs to logs/consumer.log and logs/producer.log:
+# ./run-pipeline.sh
+
 # Terminal 2: Start the pipeline
 source .venv/bin/activate
 # `setup-portforward.sh` already exports POSTGRES_PASSWORD.
@@ -195,7 +203,7 @@ This repo also includes a simple Quix Streams-based processor that runs as a Kub
 
 **Optional sinks (enabled by default):**
 - **PostgreSQL**: inserts into `public.image_uploads_processed` (idempotent on `file_hash`)
-- **Iceberg (Lakekeeper REST catalog)**: appends to `default.image_uploads_processed` in warehouse `s3://iceberg/warehouse`
+- **Iceberg (Lakekeeper REST catalog)**: appends to `default.image_uploads_processed` in Lakekeeper warehouse `seaweedfs` (tables under `s3://iceberg/warehouse`)
 
 ### Deploy to Kind
 
@@ -488,7 +496,7 @@ pkill -f image_producer.py
 
 # Kubernetes pipeline
 kubectl delete -f manifests/streaming/image-service/image-service.yaml
-kubectl delete configmap image-service-scripts
+kubectl delete configmap -n airflow image-service-scripts
 ```
 
 ### Delete Entire Platform
